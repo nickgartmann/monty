@@ -91,6 +91,33 @@ defmodule MontyWeb.ModelLiveTest do
       assert has_element?(reopened, "#stat-median", "42.0")
     end
 
+    test "distribution formulas preview, save, reopen, and recover from invalid parameters", %{
+      conn: conn,
+      model: model
+    } do
+      {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
+      view |> element("#formula-help") |> render_click()
+      assert has_element?(view, "#distribution-guide")
+      assert has_element?(view, "#range-distribution-help")
+
+      view
+      |> form("#metric-form", metric: %{input: "=normal(42, 0)"})
+      |> render_submit()
+
+      refute has_element?(view, "#metric-error")
+      assert has_element?(view, "#stat-median", "42.0")
+      assert hd(Repo.reload!(model).metrics)["input"] == "=normal(42, 0)"
+
+      {:ok, reopened, _} = live(conn, ~p"/models/#{model.id}")
+      assert has_element?(reopened, "#metric_input[value='=normal(42, 0)']")
+      assert has_element?(reopened, "#stat-median", "42.0")
+      reopened |> form("#metric-form", metric: %{input: "=uniform(20, 10)"}) |> render_change()
+      assert has_element?(reopened, "#metric-error")
+      reopened |> form("#metric-form", metric: %{input: "=uniform(10, 20)"}) |> render_change()
+      refute has_element?(reopened, "#metric-error")
+      assert has_element?(reopened, "#metric-statistics")
+    end
+
     test "adds, moves, undoes, and removes metrics", %{conn: conn, model: model} do
       {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
       assert has_element?(view, "#metrics button[draggable=true][aria-pressed=true]")

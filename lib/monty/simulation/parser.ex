@@ -15,7 +15,17 @@ defmodule Monty.Simulation.Parser do
     "log" => :log,
     "exp" => :exp,
     "mean" => :mean,
-    "sum" => :sum
+    "sum" => :sum,
+    "normal" => :normal,
+    "lognormal" => :lognormal,
+    "uniform" => :uniform,
+    "pert" => :pert,
+    "sin" => :sin,
+    "cos" => :cos,
+    "tan" => :tan,
+    "floor" => :floor,
+    "ceil" => :ceil,
+    "round" => :round
   }
 
   @doc """
@@ -28,10 +38,11 @@ defmodule Monty.Simulation.Parser do
     case input do
       "=" <> expression ->
         with {:ok, tokens} <- tokenize(expression),
-             {:ok, ast, []} <- expression(tokens, 0, 0) do
+             {:ok, source, literals, identifiers, unary} <- prepare_formula(tokens, expression),
+             {:ok, compiled, variables} <- compile(source),
+             {:ok, ast} <- translate(compiled, invert(variables, identifiers), literals, unary) do
           {:ok, {:formula, ast}, dependencies(ast)}
         else
-          {:ok, _, _} -> {:error, "Invalid formula"}
           {:error, _} = error -> error
         end
 
@@ -140,90 +151,241 @@ defmodule Monty.Simulation.Parser do
     end
   end
 
-  defp expression(_, _, depth) when depth > @max_depth,
-    do: {:error, "Formula is too deeply nested"}
+  # Abacus does not accept exponent notation or percentages and interprets a
+  # leading minus as part of a number. Literals become private variable names,
+  # while unary signs are wrapped around the entire power operand. Spaces
+  # between all tokens also prevent Abacus from lexing A-B as one identifier.
+  defp prepare_formula(tokens, original) do
+    prefix = private_prefix(original, "_monty_")
 
-  defp expression(tokens, precedence, depth) do
-    with {:ok, left, rest} <- prefix(tokens, depth + 1) do
-      infix(left, rest, precedence, depth)
+    {tokens, {literals, identifiers}} =
+      tokens
+      |> Enum.with_index()
+      |> Enum.map_reduce({%{}, %{}}, fn
+        {{:number, value}, index}, {values, identifiers} ->
+          name = "#{prefix}number_#{index}"
+          {{:identifier, name}, {Map.put(values, name, value), identifiers}}
+
+        {{:identifier, original}, index}, {values, identifiers} ->
+          name = "#{prefix}name_#{index}"
+          {{:identifier, name}, {values, Map.put(identifiers, name, original)}}
+
+        {token, _index}, state ->
+          {token, state}
+      end)
+
+    unary = %{"#{prefix}positive" => :add, "#{prefix}negative" => :subtract}
+
+    with {:ok, parts} <- normalize(tokens, unary, 0) do
+      {:ok, Enum.join(parts, " "), literals, identifiers, unary}
     end
   end
 
-  defp prefix([{:number, number} | rest], _depth), do: {:ok, {:number, number}, rest}
+  defp private_prefix(source, prefix) do
+    if String.contains?(source, prefix),
+      do: private_prefix(source, prefix <> "_"),
+      else: prefix
+  end
 
-  defp prefix([{:identifier, name}, :open | rest], depth) do
-    case Map.fetch(@functions, name) do
-      {:ok, function} ->
-        with {:ok, args, remaining} <- arguments(rest, depth) do
-          if valid_arity?(function, length(args)),
-            do: {:ok, {:call, function, args}, remaining},
-            else: {:error, "Invalid number of arguments for #{name}"}
+  defp normalize(tokens, unary, depth), do: normalize(tokens, unary, depth, true, [])
+
+  defp normalize([], _unary, _depth, _expect_operand, acc), do: {:ok, Enum.reverse(acc)}
+
+  defp normalize([sign | rest], unary, depth, true, acc) when sign in [:add, :subtract] do
+    with {:ok, operand, remaining} <- signed_power([sign | rest], unary, depth) do
+      normalize(remaining, unary, depth, false, [operand | acc])
+    end
+  end
+
+  defp normalize([{:identifier, _} | _] = tokens, unary, depth, _expect_operand, acc) do
+    with {:ok, operand, remaining} <- signed_power(tokens, unary, depth) do
+      normalize(remaining, unary, depth, false, [operand | acc])
+    end
+  end
+
+  defp normalize([:open | _] = tokens, unary, depth, _expect_operand, acc) do
+    with {:ok, operand, remaining} <- signed_power(tokens, unary, depth) do
+      normalize(remaining, unary, depth, false, [operand | acc])
+    end
+  end
+
+  defp normalize([token | rest], unary, depth, _expect_operand, acc) do
+    normalize(
+      rest,
+      unary,
+      depth,
+      token in [:comma, :add, :subtract, :multiply, :divide, :power],
+      [token_text(token) | acc]
+    )
+  end
+
+  defp signed_power(_, _, depth) when depth > @max_depth,
+    do: {:error, "Formula is too deeply nested"}
+
+  defp signed_power([sign | rest], unary, depth) when sign in [:add, :subtract] do
+    with {:ok, operand, remaining} <- signed_power(rest, unary, depth + 1) do
+      name = Enum.find_value(unary, fn {name, op} -> if op == sign, do: name end)
+      {:ok, "#{name} ( #{operand} )", remaining}
+    end
+  end
+
+  defp signed_power(tokens, unary, depth) do
+    with {:ok, base, rest} <- primary(tokens, unary, depth) do
+      case rest do
+        [:power | following] ->
+          with {:ok, exponent, remaining} <- signed_power(following, unary, depth + 1) do
+            {:ok, "#{base} ^ #{exponent}", remaining}
+          end
+
+        _ ->
+          {:ok, base, rest}
+      end
+    end
+  end
+
+  defp primary([{:identifier, name}, :open | rest], unary, depth) do
+    with {:ok, group, remaining} <- group(rest, unary, depth + 1) do
+      {:ok, name <> " " <> group, remaining}
+    end
+  end
+
+  defp primary([{:identifier, name} | rest], _unary, _depth), do: {:ok, name, rest}
+
+  defp primary([:open | rest], unary, depth), do: group(rest, unary, depth + 1)
+  defp primary(_, _, _), do: {:error, "Invalid formula"}
+
+  defp group(_, _, depth) when depth > @max_depth,
+    do: {:error, "Formula is too deeply nested"}
+
+  defp group(tokens, unary, depth) do
+    with {:ok, inside, remaining} <- split_group(tokens, 0, []),
+         {:ok, parts} <- normalize(inside, unary, depth) do
+      {:ok, "( " <> Enum.join(parts, " ") <> " )", remaining}
+    end
+  end
+
+  defp split_group([:close | rest], 0, acc), do: {:ok, Enum.reverse(acc), rest}
+  defp split_group([:open | rest], depth, acc), do: split_group(rest, depth + 1, [:open | acc])
+  defp split_group([:close | rest], depth, acc), do: split_group(rest, depth - 1, [:close | acc])
+  defp split_group([token | rest], depth, acc), do: split_group(rest, depth, [token | acc])
+  defp split_group([], 0, []), do: {:error, "Invalid formula"}
+  defp split_group([], _, _), do: {:error, "Expected closing parenthesis"}
+
+  defp token_text({:identifier, name}), do: name
+  defp token_text(:open), do: "("
+  defp token_text(:close), do: ")"
+  defp token_text(:comma), do: ","
+
+  defp token_text(operator),
+    do: operator |> then(&Enum.find(@operators, fn {_, op} -> op == &1 end)) |> elem(0)
+
+  defp compile(source) do
+    had_variables? = :variables in Process.get_keys()
+    previous = Process.get(:variables)
+
+    try do
+      case Abacus.compile(source) do
+        {:ok, _, _} = result -> result
+        _ -> {:error, "Invalid formula"}
+      end
+    rescue
+      _ -> {:error, "Invalid formula"}
+    catch
+      _, _ -> {:error, "Invalid formula"}
+    after
+      if had_variables?,
+        do: Process.put(:variables, previous),
+        else: Process.delete(:variables)
+    end
+  end
+
+  defp invert(variables, identifiers) do
+    Map.new(variables, fn {name, symbol} -> {symbol, Map.get(identifiers, name, name)} end)
+  end
+
+  defp translate(value, _names, _literals, _unary) when is_number(value),
+    do: {:ok, {:number, value}}
+
+  defp translate({symbol, _, nil}, names, literals, _unary) when is_atom(symbol) do
+    case Map.fetch(names, symbol) do
+      {:ok, name} ->
+        case Map.fetch(literals, name) do
+          {:ok, value} -> {:ok, {:number, value}}
+          :error -> {:ok, {:ref, name}}
         end
 
       :error ->
-        {:error, "Unknown function: #{name}"}
+        {:error, "Invalid formula"}
     end
   end
 
-  defp prefix([{:identifier, name} | rest], _depth), do: {:ok, {:ref, name}, rest}
-
-  defp prefix([op | rest], depth) when op in [:add, :subtract] do
-    with {:ok, ast, remaining} <- expression(rest, 4, depth) do
-      {:ok, {:unary, op, ast}, remaining}
+  defp translate({operator, _, [left, right]}, names, literals, unary)
+       when operator in [:+, :-, :*, :/] do
+    with {:ok, left} <- translate(left, names, literals, unary),
+         {:ok, right} <- translate(right, names, literals, unary) do
+      {:ok, {:binary, Map.fetch!(@operators, Atom.to_string(operator)), left, right}}
     end
   end
 
-  defp prefix([:open | rest], depth) do
-    case expression(rest, 0, depth) do
-      {:ok, ast, [:close | remaining]} -> {:ok, ast, remaining}
-      {:error, _} = error -> error
-      _ -> {:error, "Expected closing parenthesis"}
+  defp translate({{:., _, [:math, :pow]}, _, [left, right]}, names, literals, unary) do
+    with {:ok, left} <- translate(left, names, literals, unary),
+         {:ok, right} <- translate(right, names, literals, unary) do
+      {:ok, {:binary, :power, left, right}}
     end
   end
 
-  defp prefix(_, _depth), do: {:error, "Invalid formula"}
-
-  defp arguments([:close | rest], _depth), do: {:ok, [], rest}
-
-  defp arguments(tokens, depth) do
-    with {:ok, ast, rest} <- expression(tokens, 0, depth) do
-      case rest do
-        [:comma | following] ->
-          with {:ok, others, remaining} <- arguments(following, depth) do
-            {:ok, [ast | others], remaining}
+  defp translate({{:., _, [{symbol, _, nil}]}, _, args}, names, literals, unary)
+       when is_atom(symbol) and is_list(args) do
+    with {:ok, name} <- Map.fetch(names, symbol) do
+      cond do
+        Map.has_key?(unary, name) and length(args) == 1 ->
+          with {:ok, argument} <- translate(hd(args), names, literals, unary) do
+            {:ok, {:unary, Map.fetch!(unary, name), argument}}
           end
 
-        [:close | following] ->
-          {:ok, [ast], following}
+        Map.has_key?(unary, name) ->
+          {:error, "Invalid formula"}
 
-        _ ->
-          {:error, "Expected comma or closing parenthesis"}
-      end
-    end
-  end
+        Map.has_key?(@functions, name) ->
+          function = Map.fetch!(@functions, name)
 
-  defp infix(left, [op | rest] = tokens, minimum, depth) do
-    precedence = operator_precedence(op)
+          if valid_arity?(function, length(args)) do
+            with {:ok, arguments} <- translate_args(args, names, literals, unary) do
+              {:ok, {:call, function, arguments}}
+            end
+          else
+            {:error, "Invalid number of arguments for #{name}"}
+          end
 
-    if precedence >= minimum do
-      next_minimum = if op == :power, do: precedence, else: precedence + 1
-
-      with {:ok, right, remaining} <- expression(rest, next_minimum, depth + 1) do
-        infix({:binary, op, left, right}, remaining, minimum, depth)
+        true ->
+          {:error, "Unknown function: #{name}"}
       end
     else
-      {:ok, left, tokens}
+      :error -> {:error, "Invalid formula"}
     end
   end
 
-  defp infix(left, [], _minimum, _depth), do: {:ok, left, []}
+  defp translate(_, _, _, _), do: {:error, "Invalid formula"}
 
-  defp operator_precedence(op) when op in [:add, :subtract], do: 2
-  defp operator_precedence(op) when op in [:multiply, :divide], do: 3
-  defp operator_precedence(:power), do: 4
-  defp operator_precedence(_), do: -1
+  defp translate_args(args, names, literals, unary) do
+    Enum.reduce_while(args, {:ok, []}, fn argument, {:ok, acc} ->
+      case translate(argument, names, literals, unary) do
+        {:ok, ast} -> {:cont, {:ok, [ast | acc]}}
+        error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, reversed} -> {:ok, Enum.reverse(reversed)}
+      error -> error
+    end
+  end
 
-  defp valid_arity?(function, n) when function in [:abs, :sqrt, :log, :exp], do: n == 1
+  defp valid_arity?(function, n)
+       when function in [:abs, :sqrt, :log, :exp, :sin, :cos, :tan, :floor, :ceil, :round],
+       do: n == 1
+
+  defp valid_arity?(function, n) when function in [:normal, :lognormal, :uniform], do: n == 2
+  defp valid_arity?(:pert, n), do: n == 3
   defp valid_arity?(function, n) when function in [:min, :max], do: n >= 2
   defp valid_arity?(function, n) when function in [:mean, :sum], do: n >= 1
 

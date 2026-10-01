@@ -80,18 +80,43 @@ back up the database before applying it if you need to return to the old canvas.
 | `10 to 20` + Uniform | Full lower and upper bounds |
 | `=A * B` | Multiply the sampled values of two metrics |
 | `=max(A - B, 0)` | A safe, allowlisted function |
+| `=normal(100, 15)` | Normal draw with mean 100 and standard deviation 15 |
+| `=lognormal(0, 1)` | Lognormal draw with log-space mean 0 and standard deviation 1 |
+| `=uniform(10, 20)` | Uniform draw between hard bounds |
+| `=pert(10, 15, 30)` | Beta-PERT draw with minimum 10, mode 15, and maximum 30 |
+| `=normal(A, B) + C` | Distribution parameters and arithmetic using sampled metrics |
 
 Formulas support `+ - * / ^`, parentheses, and `min`, `max`, `abs`,
-`sqrt`, `log`, `exp`, `sum`, and `mean`. Metric letter references are
+`sqrt`, `log`, `exp`, `sum`, `mean`, `sin`, `cos`, `tan`, `floor`, `ceil`,
+and `round`. Normal and lognormal calls require a non-negative standard
+deviation; zero produces a point value. Uniform requires lower < upper.
+PERT takes exactly three parameters: minimum, most likely value (mode), and
+maximum. It uses standard beta-PERT with fixed weighting 4, stays within
+the entered bounds, and has theoretical mean `(minimum + 4 * mode + maximum) / 6`.
+Minimum must be less than maximum; the mode can be anywhere between them,
+including either endpoint. Parameters can reference cards (`=pert(A, B, C)`)
+or contain arithmetic.
+The range selector affects only `lower to upper` inputs, not formula calls.
+Metric letter references are
 permanent even when names change. A formula referencing a deleted metric
 shows an error; new cards do not take a key that is still referenced.
 Cycles, unknown references, invalid distributions, and numeric errors are
-shown on the affected cards. Formulas are parsed, never evaluated as Elixir
-or JavaScript.
+shown on the affected cards. [Abacus](https://github.com/narrowtux/abacus)
+compiles formulas once per run. Monty translates the result to a bounded,
+allowlisted numeric expression tree; it never executes the generated Elixir
+code. Scripts, collections, property access, and arbitrary function calls
+are not supported. Existing commas, scientific notation, percentages, and
+unary signs retain their meaning.
+Put spaces after argument-separating commas to distinguish them from
+thousands separators: `=pert(0, 100, 200)` versus the number `100,200`.
 
 The editor computes 1,000 correlated draws using a fixed seed, so comparing
 edits is stable. Repeated references use the same sampled value within each
-draw (`=A - A` is always zero). Normal draws can fall outside the entered
+draw (`=A - A` is always zero), including when A is defined by a distribution
+call. Separate calls inside a formula make independent draws, so
+`=normal(0, 1) - normal(0, 1)` is not always zero. Formula draws use the same
+explicit seeded RNG as ranges, without changing the caller's random state.
+Normal draws can fall outside the entered
 90% interval, including below zero. These simulations are approximate
 decision aids, not guarantees.
 
@@ -118,7 +143,8 @@ discovery cards.
 - `Monty.Models`: scope-based model persistence and access rules.
 - `Monty.Models.Model`: model and bounded metric-map validation.
 - `Monty.Canvas`: shared dot-grid spacing, bounds, card dimensions, and layout conversion.
-- `Monty.Simulation`: safe expression parsing and Monte Carlo computation.
+- `Monty.Simulation.Parser`: Abacus-backed formula parsing and numeric AST allowlisting.
+- `Monty.Simulation`: dependency resolution, seeded distribution draws, and Monte Carlo computation.
 - `MontyWeb.ModelLive`: canvas, editor, simulation display, and save workflow.
 - `MontyWeb.ModelLibraryLive`: streamed catalog and library search.
 - `Monty.ModelFile`, `MontyWeb.ModelImportLive`: versioned JSON round-tripping.
@@ -153,7 +179,7 @@ stale saves, and JSON round-tripping.
 This is a working core rebuild, **not complete feature parity or a drop-in
 legacy replacement**. Organization memberships and reusable facts, tokenized
 private sharing, checkpoint history, multi-user live collaboration, sensitivity
-analysis, empirical-data/beta distributions, billing, and migration of existing
+analysis, empirical-data/general beta distributions, billing, and migration of existing
 Guesstimate databases are not implemented. Monty imports its own versioned
 exports, not legacy graph JSON or arbitrary Math.js expressions.
 
