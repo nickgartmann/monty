@@ -8,6 +8,7 @@ defmodule Monty.Canvas do
   @padding 32
   @card_width 240
   @card_height 188
+  @link_bend 50
   @max_x 200
   @max_y 1200
   @minimum_width 904
@@ -19,6 +20,7 @@ defmodule Monty.Canvas do
   def padding, do: @padding
   def card_width, do: @card_width
   def card_height, do: @card_height
+  def link_bend, do: @link_bend
   def max_x, do: @max_x
   def max_y, do: @max_y
 

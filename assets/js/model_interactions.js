@@ -1,7 +1,8 @@
 // LiveView owns all cards and results. This ignored event bridge only handles
-// browser drag gestures, downloads, and an asset-compatibility notice. It never
-// renders model content.
-import {clampPosition, readGeometry, snapPosition} from "./canvas_geometry.mjs"
+// pointer gestures, downloads, and an asset-compatibility notice. Persisted card
+// positions and content remain server-owned.
+import {clampPosition, readGeometry} from "./canvas_geometry.mjs"
+import {CanvasDrag} from "./canvas_drag.mjs"
 
 export const ModelInteractions = {
   mounted() {
@@ -12,52 +13,20 @@ export const ModelInteractions = {
       return value
     }
     geometry(canvas())
-    this.dragstart = event => {
-      const card = event.target.closest("[data-metric-id][draggable=true]")
-      if (!card || !canvas()?.contains(card)) return
-      if (!geometry(canvas())) {
-        event.preventDefault()
-        return
-      }
-      const rect = card.getBoundingClientRect()
-      event.dataTransfer.setData("text/monty-metric", JSON.stringify({
-        id: card.dataset.metricId,
-        offsetX: event.clientX - rect.left,
-        offsetY: event.clientY - rect.top,
-      }))
-      event.dataTransfer.effectAllowed = "move"
-    }
-    this.dragover = event => {
-      if (canvas()?.contains(event.target) && [...event.dataTransfer.types].includes("text/monty-metric")) {
-        event.preventDefault()
-        event.dataTransfer.dropEffect = "move"
-      }
-    }
-    this.drop = event => {
-      const element = canvas()
-      if (!element?.contains(event.target)) return
-      const grid = geometry(element)
-      if (!grid) {
-        event.preventDefault()
-        return
-      }
-      let payload
-      try {
-        payload = JSON.parse(event.dataTransfer.getData("text/monty-metric"))
-      } catch {
-        return
-      }
-      if (!payload?.id || !Number.isFinite(payload.offsetX) || !Number.isFinite(payload.offsetY)) return
-      event.preventDefault()
-      const rect = element.getBoundingClientRect()
-      const position = snapPosition({
-        left: event.clientX - rect.left - payload.offsetX,
-        top: event.clientY - rect.top - payload.offsetY,
-      }, grid)
-      this.pushEvent("move-metric", {id: payload.id, ...position})
-    }
+    this.canvasDrag = new CanvasDrag({
+      host: this.el,
+      getCanvas: canvas,
+      onInvalidGeometry: () => this.showCompatibilityNotice(),
+      onMove: (id, position, done) => {
+        this.pushEvent("move-metric", {id, ...position}, () => {
+          if (done() && this.el.isConnected) this.pushEvent("select", {id})
+        })
+      },
+    })
+    this.canvasDrag.mount()
     this.keydown = event => {
-      const card = event.target.closest("[data-metric-id][draggable=true]")
+      if (this.canvasDrag.busy) return
+      const card = event.target.closest("[data-metric-id][data-movable=true], [data-metric-id][draggable=true]")
       const element = canvas()
       if (!card || !element?.contains(card) || event.altKey || event.ctrlKey || event.metaKey) return
       const directions = {ArrowLeft: [-1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowRight: [1, 0]}
@@ -76,9 +45,6 @@ export const ModelInteractions = {
         this.pushEvent("move-metric", {id: card.dataset.metricId, ...position})
       }
     }
-    document.addEventListener("dragstart", this.dragstart)
-    document.addEventListener("dragover", this.dragover)
-    document.addEventListener("drop", this.drop)
     document.addEventListener("keydown", this.keydown)
     this.handleEvent("download-model", ({name, content}) => {
       const url = URL.createObjectURL(new Blob([content], {type: "application/json"}))
@@ -105,10 +71,11 @@ export const ModelInteractions = {
     notice.append(message, reload)
     this.el.append(notice)
   },
+  disconnected() {
+    this.canvasDrag?.cancel()
+  },
   destroyed() {
-    document.removeEventListener("dragstart", this.dragstart)
-    document.removeEventListener("dragover", this.dragover)
-    document.removeEventListener("drop", this.drop)
+    this.canvasDrag?.destroy()
     document.removeEventListener("keydown", this.keydown)
   }
 }

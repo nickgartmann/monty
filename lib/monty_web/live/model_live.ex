@@ -437,7 +437,13 @@ defmodule MontyWeb.ModelLive do
       sy = source_top + div(Canvas.card_height(), 2)
       tx = target_left
       ty = target_top + div(Canvas.card_height(), 2)
-      "M #{sx} #{sy} C #{sx + 50} #{sy}, #{tx - 50} #{ty}, #{tx} #{ty}"
+      bend = Canvas.link_bend()
+
+      %{
+        source_id: source["id"],
+        target_id: target["id"],
+        path: "M #{sx} #{sy} C #{sx + bend} #{sy}, #{tx - bend} #{ty}, #{tx} #{ty}"
+      }
     end
   end
 
@@ -633,9 +639,10 @@ defmodule MontyWeb.ModelLive do
           References use the permanent letter on each card. Arithmetic, parentheses, <code>min</code>, <code>max</code>, <code>abs</code>, <code>sqrt</code>, <code>log</code>, <code>exp</code>, <code>sum</code>, and
           <code>mean</code>
           are supported.
-          Changes preview immediately; save to keep them. Drag cards to snap to the background dots
+          Changes preview immediately; save to keep them. Move cards directly and use the shadow
+          to preview where they will snap to the background dots
           ({Canvas.grid_step()}px). Use the position controls or arrow keys on a focused card to move one dot;
-          Shift + arrow moves five dots.
+          Shift + arrow moves five dots. Press Escape to cancel a drag.
           <span class="block text-xs text-teal-700">Simulation estimates are approximate, not guarantees. Normal draws may fall outside the entered interval. Preview uses a fixed seed so edits are comparable.</span>
         </div>
 
@@ -650,6 +657,7 @@ defmodule MontyWeb.ModelLive do
               data-grid-padding={Canvas.padding()}
               data-grid-max-x={Canvas.max_x()}
               data-grid-max-y={Canvas.max_y()}
+              data-link-bend={Canvas.link_bend()}
             >
               <svg
                 class="pointer-events-none absolute inset-0"
@@ -670,8 +678,11 @@ defmodule MontyWeb.ModelLive do
                   </marker>
                 </defs>
                 <path
-                  :for={path <- connections(@model, @results)}
-                  d={path}
+                  :for={connection <- connections(@model, @results)}
+                  id={"connection-#{connection.source_id}-#{connection.target_id}"}
+                  data-source-id={connection.source_id}
+                  data-target-id={connection.target_id}
+                  d={connection.path}
                   class="dependency-path"
                   marker-end="url(#arrowhead)"
                 />
@@ -686,7 +697,8 @@ defmodule MontyWeb.ModelLive do
                   data-metric-id={card.id}
                   data-grid-x={card.metric["x"]}
                   data-grid-y={card.metric["y"]}
-                  draggable={to_string(@editable?)}
+                  data-movable={to_string(@editable?)}
+                  draggable="false"
                   class={[
                     "metric-card",
                     card.selected? && "metric-card-selected",

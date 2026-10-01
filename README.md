@@ -58,10 +58,13 @@ reauthentication use the generated Phoenix code.
 ### Canvas movement
 
 Cards snap to the background dots in **20px increments** on both axes.
-Drag from any point on a card; the release preserves your grab offset and snaps
-to the nearest dot. Position controls and arrow keys on a focused card move one
-dot at a time; Shift + arrow moves five dots. The background scrolls with the
-cards, and dependency lines follow the cards' actual positions.
+Drag the card itself from any point: it follows the pointer without a browser
+ghost, while a subtle shadow previews the snapped drop position. Releasing
+preserves your grab offset and snaps to the nearest dot; Escape cancels a drag.
+Position controls and arrow keys on a focused card move one dot at a time;
+Shift + arrow moves five dots. Mouse, pen, and touch use the same interaction.
+The background scrolls with the cards, and dependency lines follow the cards
+while moving. A shadow turns red if its origin is already occupied.
 
 Saved coordinates are fine-grid indices, not card-sized cells. New exports use
 Monty format v2; v1 imports convert older layouts to the nearest dot. Run
@@ -141,7 +144,7 @@ mix assets.build
 Client-side snapping tests use Node's built-in runner, without npm dependencies:
 
 ```sh
-node --test assets/js/canvas_geometry.test.mjs
+node --test assets/js/*.test.mjs
 ```
 
 Tests cover generated accounts, ownership/visibility, FTS synchronization,

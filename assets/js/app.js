@@ -25,12 +25,14 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/monty"
 import topbar from "../vendor/topbar"
 import {ModelInteractions} from "./model_interactions"
+import {preserveDragStyles} from "./canvas_drag.mjs"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
   hooks: {...colocatedHooks, ModelInteractions},
+  dom: {onBeforeElUpdated: preserveDragStyles},
 })
 
 // Show progress bar on live navigation and form submits

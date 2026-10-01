@@ -41,6 +41,7 @@ defmodule MontyWeb.ModelLiveTest do
     refute has_element?(view, "#save-model")
     assert has_element?(view, "#metric_name[readonly]")
     assert has_element?(view, "#metrics button[draggable=false]")
+    assert has_element?(view, "#metrics button[data-movable=false]")
     render_click(view, "add-metric")
     render_click(view, "delete-metric", %{"id" => hd(model.metrics)["id"]})
     render_click(view, "move-metric", %{"id" => hd(model.metrics)["id"], "x" => 5, "y" => 6})
@@ -93,7 +94,12 @@ defmodule MontyWeb.ModelLiveTest do
 
     test "adds, moves, undoes, and removes metrics", %{conn: conn, model: model} do
       {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
-      assert has_element?(view, "#metrics button[draggable=true][aria-pressed=true]")
+
+      assert has_element?(
+               view,
+               "#metrics button[data-movable=true][draggable=false][aria-pressed=true]"
+             )
+
       view |> element("#add-metric") |> render_click()
       assert has_element?(view, "#metrics button", "New metric")
       view |> element("#move-down") |> render_click()
@@ -125,6 +131,13 @@ defmodule MontyWeb.ModelLiveTest do
       {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
 
       assert has_element?(view, "#model-canvas[data-grid-step='20']")
+      assert has_element?(view, "#model-canvas[data-link-bend='50']")
+
+      assert has_element?(
+               view,
+               "#connection-#{a["id"]}-#{c["id"]}[data-source-id='#{a["id"]}'][data-target-id='#{c["id"]}']"
+             )
+
       render_click(view, "move-metric", %{"id" => c["id"], "x" => 14, "y" => 6})
       assert has_element?(view, "#metrics-#{c["id"]}[style*='top: 152px;']")
       assert has_element?(view, "#model-canvas .dependency-path[d$='312 246']")
