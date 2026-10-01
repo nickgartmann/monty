@@ -1,7 +1,7 @@
 defmodule MontyWeb.ModelNewLive do
   use MontyWeb, :live_view
 
-  alias Monty.Models
+  alias Monty.{Examples, Models}
   alias Monty.Models.Model
 
   @impl true
@@ -26,7 +26,7 @@ defmodule MontyWeb.ModelNewLive do
   end
 
   def handle_event("save", %{"model" => params}, socket) do
-    attrs = Map.put(params, "metrics", starter_metrics())
+    attrs = Map.put(params, "metrics", Examples.starter_metrics())
 
     case Models.create_model(socket.assigns.current_scope, attrs) do
       {:ok, model} ->
@@ -38,41 +38,6 @@ defmodule MontyWeb.ModelNewLive do
       {:error, changeset} ->
         {:noreply, assign(socket, :form, to_form(changeset, as: :model))}
     end
-  end
-
-  defp starter_metrics do
-    [
-      %{
-        "id" => Ecto.UUID.generate(),
-        "key" => "A",
-        "name" => "Monthly visitors",
-        "input" => "1000 to 2000",
-        "distribution" => "normal",
-        "notes" => "",
-        "x" => 0,
-        "y" => 0
-      },
-      %{
-        "id" => Ecto.UUID.generate(),
-        "key" => "B",
-        "name" => "Conversion rate",
-        "input" => "2% to 5%",
-        "distribution" => "uniform",
-        "notes" => "",
-        "x" => 0,
-        "y" => 1
-      },
-      %{
-        "id" => Ecto.UUID.generate(),
-        "key" => "C",
-        "name" => "Customers",
-        "input" => "=A * B",
-        "distribution" => "normal",
-        "notes" => "",
-        "x" => 1,
-        "y" => 0
-      }
-    ]
   end
 
   @impl true

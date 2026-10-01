@@ -1,8 +1,10 @@
 defmodule Monty.ModelsTest do
   use Monty.DataCase
 
+  alias Monty.Canvas
   alias Monty.Models
   alias Monty.Models.Model
+  alias Monty.Repo
   import Monty.ModelsFixtures
 
   setup do
@@ -162,7 +164,8 @@ defmodule Monty.ModelsTest do
         [Map.put(base, "distribution", "triangular")],
         [Map.put(base, "input", String.duplicate("x", 1_001))],
         [Map.put(base, "notes", String.duplicate("n", 2_001))],
-        [Map.put(base, "x", 12)],
+        [Map.put(base, "x", Canvas.max_x() + 1)],
+        [Map.put(base, "y", Canvas.max_y() + 1)],
         [Map.put(base, "y", -1)],
         [base, Map.put(second, "key", "A")],
         [base, Map.put(second, "x", 0) |> Map.put("y", 0)],
@@ -178,6 +181,16 @@ defmodule Monty.ModelsTest do
       end
     end
 
+    test "fine-grid bounds and sub-card positions remain valid", %{owner: owner} do
+      base = metric_fixture(%{"x" => Canvas.max_x(), "y" => Canvas.max_y()})
+      nearby = metric_fixture(%{"key" => "B", "x" => Canvas.max_x() - 1, "y" => Canvas.max_y()})
+
+      assert {:ok, model} =
+               Models.create_model(owner, %{title: "Fine grid", metrics: [base, nearby]})
+
+      assert model.metrics == [base, nearby]
+    end
+
     test "title and description are bounded", %{owner: owner} do
       for attrs <- [
             %{title: ""},
@@ -187,5 +200,51 @@ defmodule Monty.ModelsTest do
         assert {:error, _changeset} = Models.create_model(owner, attrs)
       end
     end
+  end
+
+  test "migration preserves metric order and fields and invalidates older editor versions", %{
+    owner: owner
+  } do
+    migration = Monty.Repo.Migrations.ConvertMetricPositionsToFineGrid
+
+    unless Code.ensure_loaded?(migration) do
+      Code.require_file(
+        "../../priv/repo/migrations/20261001200453_convert_metric_positions_to_fine_grid.exs",
+        __DIR__
+      )
+    end
+
+    legacy = [
+      metric_fixture(%{"x" => 2, "y" => 1, "extra" => %{"keep" => true}}),
+      metric_fixture(%{"key" => "B", "x" => 11, "y" => 99})
+    ]
+
+    model = model_fixture(owner)
+    empty = model_fixture(owner, %{metrics: []})
+
+    Ecto.Adapters.SQL.query!(
+      Repo,
+      "UPDATE models SET metrics = ?, lock_version = 5 WHERE id = ?",
+      [Jason.encode!(legacy), model.id]
+    )
+
+    Ecto.Adapters.SQL.query!(
+      Repo,
+      apply(migration, :conversion_sql, []),
+      []
+    )
+
+    converted = Repo.get!(Model, model.id)
+
+    assert converted.metrics ==
+             [
+               legacy |> Enum.at(0) |> Map.put("x", 28) |> Map.put("y", 11),
+               legacy |> Enum.at(1) |> Map.put("x", 154) |> Map.put("y", 1109)
+             ]
+
+    assert converted.lock_version == 6
+    assert Repo.get!(Model, empty.id).metrics == []
+    assert Repo.get!(Model, empty.id).lock_version == empty.lock_version
+    assert {:error, :stale} = Models.update_model(owner, model, %{title: "Stale socket"})
   end
 end

@@ -1,7 +1,7 @@
 defmodule MontyWeb.ModelLive do
   use MontyWeb, :live_view
 
-  alias Monty.{Examples, ModelFile, Models, Simulation}
+  alias Monty.{Canvas, Examples, ModelFile, Models, Simulation}
   alias Monty.Models.Model
 
   @samples 1000
@@ -70,7 +70,7 @@ defmodule MontyWeb.ModelLive do
     with true <- socket.assigns.editable?,
          true <- length(socket.assigns.model.metrics) < 100 do
       metrics = socket.assigns.model.metrics
-      {x, y} = free_position(metrics)
+      {x, y} = Canvas.free_position(metrics)
       metric = Examples.metric(next_key(metrics), "New metric", "0", x, y)
 
       {:noreply,
@@ -101,22 +101,30 @@ defmodule MontyWeb.ModelLive do
 
   def handle_event("move-metric", %{"id" => id, "x" => x, "y" => y}, socket) do
     with true <- socket.assigns.editable?,
-         {:ok, x} <- coordinate(x, 11),
-         {:ok, y} <- coordinate(y, 99),
+         metric when not is_nil(metric) <-
+           Enum.find(socket.assigns.model.metrics, &(&1["id"] == id)),
+         {:ok, x} <- coordinate(x, Canvas.max_x()),
+         {:ok, y} <- coordinate(y, Canvas.max_y()),
          false <-
            Enum.any?(
              socket.assigns.model.metrics,
              &(&1["id"] != id && &1["x"] == x && &1["y"] == y)
            ) do
-      metrics =
-        Enum.map(socket.assigns.model.metrics, fn
-          %{"id" => ^id} = metric -> Map.merge(metric, %{"x" => x, "y" => y})
-          metric -> metric
-        end)
+      if {metric["x"], metric["y"]} == {x, y} do
+        {:noreply, socket}
+      else
+        metrics =
+          Enum.map(socket.assigns.model.metrics, fn
+            %{"id" => ^id} = metric -> Map.merge(metric, %{"x" => x, "y" => y})
+            metric -> metric
+          end)
 
-      {:noreply, socket |> remember() |> draft(metrics) |> refresh_selection()}
+        {:noreply, socket |> remember() |> draft(metrics) |> refresh_selection()}
+      end
     else
-      _ -> {:noreply, put_flash(socket, :error, "Choose an empty position on the canvas.")}
+      _ ->
+        {:noreply,
+         put_flash(socket, :error, "Choose a valid grid point not already used by another card.")}
     end
   end
 
@@ -319,7 +327,7 @@ defmodule MontyWeb.ModelLive do
 
   defp recompute(socket) do
     results = Simulation.run(socket.assigns.model.metrics, samples: @samples, seed: {41, 72, 19})
-    {width, height} = canvas_size(socket.assigns.model.metrics)
+    {width, height} = Canvas.size(socket.assigns.model.metrics)
 
     socket
     |> assign(results: results, canvas_width: width, canvas_height: height)
@@ -338,7 +346,19 @@ defmodule MontyWeb.ModelLive do
         }
       end)
 
-    stream(socket, :metrics, cards, reset: true)
+    # Update existing nodes in place: resetting the stream loses a card's keyboard
+    # focus on every nudge. Only remove cards that actually left the model.
+    ids = MapSet.new(cards, & &1.id)
+    previous_ids = Map.get(socket.assigns, :metric_ids, MapSet.new())
+
+    socket =
+      Enum.reduce(MapSet.difference(previous_ids, ids), socket, fn id, socket ->
+        stream_delete(socket, :metrics, %{id: id})
+      end)
+
+    socket
+    |> stream(:metrics, cards)
+    |> assign(:metric_ids, ids)
   end
 
   defp select_metric(socket, nil) do
@@ -391,21 +411,18 @@ defmodule MontyWeb.ModelLive do
     end)
   end
 
-  defp free_position(metrics) do
-    occupied = MapSet.new(metrics, &{&1["x"], &1["y"]})
-
-    Enum.find_value(0..99, fn y ->
-      Enum.find_value(0..2, fn x -> if !MapSet.member?(occupied, {x, y}), do: {x, y} end)
-    end)
+  defp metric_style(metric) do
+    {left, top} = Canvas.pixel_position(metric)
+    "left: #{left}px; top: #{top}px;"
   end
 
-  defp canvas_size(metrics) do
-    {max(3, Enum.max(Enum.map(metrics, &(&1["x"] + 1)), fn -> 3 end)) * 280 + 64,
-     max(3, Enum.max(Enum.map(metrics, &(&1["y"] + 1)), fn -> 3 end)) * 224 + 64}
-  end
+  defp canvas_style(width, height) do
+    dot_offset = rem(Canvas.padding(), Canvas.grid_step()) - div(Canvas.grid_step(), 2)
 
-  defp metric_style(metric),
-    do: "left: #{32 + metric["x"] * 280}px; top: #{32 + metric["y"] * 224}px;"
+    "width: #{width}px; height: #{height}px; " <>
+      "--canvas-grid-step: #{Canvas.grid_step()}px; --canvas-dot-offset: #{dot_offset}px; " <>
+      "--metric-width: #{Canvas.card_width()}px; --metric-height: #{Canvas.card_height()}px;"
+  end
 
   defp connections(model, results) do
     by_key = Map.new(model.metrics, &{&1["key"], &1})
@@ -414,10 +431,12 @@ defmodule MontyWeb.ModelLive do
         dependency <- Map.get(Map.get(results, target["key"], %{}), :dependencies, []),
         source = Map.get(by_key, dependency),
         source do
-      sx = 32 + source["x"] * 280 + 240
-      sy = 32 + source["y"] * 224 + 94
-      tx = 32 + target["x"] * 280
-      ty = 32 + target["y"] * 224 + 94
+      {source_left, source_top} = Canvas.pixel_position(source)
+      {target_left, target_top} = Canvas.pixel_position(target)
+      sx = source_left + Canvas.card_width()
+      sy = source_top + div(Canvas.card_height(), 2)
+      tx = target_left
+      ty = target_top + div(Canvas.card_height(), 2)
       "M #{sx} #{sy} C #{sx + 50} #{sy}, #{tx - 50} #{ty}, #{tx} #{ty}"
     end
   end
@@ -614,7 +633,9 @@ defmodule MontyWeb.ModelLive do
           References use the permanent letter on each card. Arithmetic, parentheses, <code>min</code>, <code>max</code>, <code>abs</code>, <code>sqrt</code>, <code>log</code>, <code>exp</code>, <code>sum</code>, and
           <code>mean</code>
           are supported.
-          Changes preview immediately; save to keep them. Drag cards or use the position controls.
+          Changes preview immediately; save to keep them. Drag cards to snap to the background dots
+          ({Canvas.grid_step()}px). Use the position controls or arrow keys on a focused card to move one dot;
+          Shift + arrow moves five dots.
           <span class="block text-xs text-teal-700">Simulation estimates are approximate, not guarantees. Normal draws may fall outside the entered interval. Preview uses a fixed seed so edits are comparable.</span>
         </div>
 
@@ -622,9 +643,13 @@ defmodule MontyWeb.ModelLive do
           <section class="canvas-scroll" aria-label="Model canvas">
             <div
               id="model-canvas"
-              class="relative"
-              style={"width: #{@canvas_width}px; height: #{@canvas_height}px;"}
+              class="canvas-surface relative"
+              style={canvas_style(@canvas_width, @canvas_height)}
               data-model-canvas
+              data-grid-step={Canvas.grid_step()}
+              data-grid-padding={Canvas.padding()}
+              data-grid-max-x={Canvas.max_x()}
+              data-grid-max-y={Canvas.max_y()}
             >
               <svg
                 class="pointer-events-none absolute inset-0"
@@ -659,6 +684,8 @@ defmodule MontyWeb.ModelLive do
                   phx-click="select"
                   phx-value-id={card.id}
                   data-metric-id={card.id}
+                  data-grid-x={card.metric["x"]}
+                  data-grid-y={card.metric["y"]}
                   draggable={to_string(@editable?)}
                   class={[
                     "metric-card",
@@ -764,7 +791,10 @@ defmodule MontyWeb.ModelLive do
                   readonly={!@editable?}
                 />
                 <button :if={@editable?} id="apply-metric" type="submit" class="button-primary w-full">{if(
-                  @demo?, do: "Apply changes", else: "Apply & save changes")}<.icon
+                  @demo?,
+                  do: "Apply changes",
+                  else: "Apply & save changes"
+                )}<.icon
                   name="hero-arrow-right"
                   class="size-4"
                 /></button>
@@ -812,15 +842,18 @@ defmodule MontyWeb.ModelLive do
               </p>
               <div :if={@editable?} class="mt-7 border-t border-slate-100 pt-5">
                 <p class="eyebrow mb-3">Canvas position</p>
+                <p class="mb-3 text-[11px] text-slate-400">
+                  Snap to dots · {Canvas.grid_step()}px per step
+                </p>
                 <div class="flex items-center justify-between">
                   <div class="flex gap-1">
                     <button
                       :for={
-                        {direction, dx, dy} <- [
-                          {"left", -1, 0},
-                          {"up", 0, -1},
-                          {"down", 0, 1},
-                          {"right", 1, 0}
+                        {direction, dx, dy, icon} <- [
+                          {"left", -1, 0, "hero-arrow-left-mini"},
+                          {"up", 0, -1, "hero-arrow-up-mini"},
+                          {"down", 0, 1, "hero-arrow-down-mini"},
+                          {"right", 1, 0, "hero-arrow-right-mini"}
                         ]
                       }
                       type="button"
@@ -830,9 +863,9 @@ defmodule MontyWeb.ModelLive do
                       phx-value-id={@selected["id"]}
                       phx-value-x={@selected["x"] + dx}
                       phx-value-y={@selected["y"] + dy}
-                      aria-label={"Move metric #{direction}"}
+                      aria-label={"Move metric #{direction} #{Canvas.grid_step()} pixels"}
                     >
-                      <.icon name={"hero-arrow-#{direction}-mini"} class="size-3.5" />
+                      <.icon name={icon} class="size-3.5" />
                     </button>
                   </div>
                   <button

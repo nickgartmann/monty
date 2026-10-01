@@ -65,13 +65,18 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .form-input-error { border-color: #fda4af; }
 .phx-submit-loading .button-primary { opacity: .65; pointer-events: none; }
 .model-workspace { display: grid; grid-template-columns: minmax(0,1fr) 340px; min-height: calc(100vh - 212px); }
-.canvas-scroll { overflow: auto; background-color: #f5f8f5; background-image: radial-gradient(#cddbd3 1px, transparent 1px); background-size: 20px 20px; }
+.canvas-scroll { overflow: auto; background-color: #f5f8f5; }
+.canvas-surface {
+  background-image: radial-gradient(#cddbd3 1px, transparent 1px);
+  background-size: var(--canvas-grid-step, 20px) var(--canvas-grid-step, 20px);
+  background-position: var(--canvas-dot-offset, 2px) var(--canvas-dot-offset, 2px);
+}
 .metric-card {
-  position: absolute; width: 240px; height: 188px; text-align: left; border: 1px solid #dce6df;
+  position: absolute; width: var(--metric-width, 240px); height: var(--metric-height, 188px); text-align: left; border: 1px solid #dce6df;
   border-radius: 12px; background: #fff; padding: 16px 18px; box-shadow: 0 3px 8px #123a2007;
   transition: border-color .15s, box-shadow .15s, transform .15s;
 }
-.metric-card:hover { border-color: #9ebfb0; box-shadow: 0 5px 16px #123a2010; transform: translateY(-2px); }
+.metric-card:hover { border-color: #9ebfb0; box-shadow: 0 5px 16px #123a2010; }
 .metric-card-selected { border-color: #0d9488; box-shadow: 0 0 0 2px #0d948821, 0 5px 16px #123a2010; }
 .metric-card-error { border-color: #fda4af; }
 .metric-card[draggable=true] { cursor: grab; }

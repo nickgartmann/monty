@@ -4,7 +4,7 @@ defmodule MontyWeb.ModelLiveTest do
   import Phoenix.LiveViewTest
   import Monty.ModelsFixtures
 
-  alias Monty.{Models, Repo}
+  alias Monty.{Canvas, Models, Repo}
   alias Monty.Accounts.Scope
 
   test "sandbox renders and calculates without an account", %{conn: conn} do
@@ -43,6 +43,7 @@ defmodule MontyWeb.ModelLiveTest do
     assert has_element?(view, "#metrics button[draggable=false]")
     render_click(view, "add-metric")
     render_click(view, "delete-metric", %{"id" => hd(model.metrics)["id"]})
+    render_click(view, "move-metric", %{"id" => hd(model.metrics)["id"], "x" => 5, "y" => 6})
 
     render_submit(view, "save-metric", %{
       "metric" => %{"name" => "Stolen", "input" => "9", "distribution" => "normal"}
@@ -97,11 +98,87 @@ defmodule MontyWeb.ModelLiveTest do
       assert has_element?(view, "#metrics button", "New metric")
       view |> element("#move-down") |> render_click()
       view |> element("#save-model") |> render_click()
-      assert [%{"key" => "A"}, %{"key" => "B", "x" => 1, "y" => 1}] = Repo.reload!(model).metrics
+      assert [%{"key" => "A"}, %{"key" => "B", "x" => 14, "y" => 1}] = Repo.reload!(model).metrics
       view |> element("#delete-metric") |> render_click()
       refute has_element?(view, "#metrics button", "New metric")
       view |> element("#undo") |> render_click()
       assert has_element?(view, "#metrics button", "New metric")
+    end
+
+    test "a card can sit halfway between rows, save, and reopen on the dot grid", %{
+      conn: conn,
+      scope: scope
+    } do
+      a = metric_fixture(%{"name" => "Visitors"})
+      b = metric_fixture(%{"key" => "B", "name" => "Conversion rate", "y" => 12})
+
+      c =
+        metric_fixture(%{
+          "key" => "C",
+          "name" => "Customers",
+          "input" => "=A * B",
+          "x" => 14,
+          "y" => 12
+        })
+
+      model = model_fixture(scope, %{metrics: [a, b, c]})
+      {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
+
+      assert has_element?(view, "#model-canvas[data-grid-step='20']")
+      render_click(view, "move-metric", %{"id" => c["id"], "x" => 14, "y" => 6})
+      assert has_element?(view, "#metrics-#{c["id"]}[style*='top: 152px;']")
+      assert has_element?(view, "#model-canvas .dependency-path[d$='312 246']")
+      view |> element("#save-model") |> render_click()
+
+      moved = List.last(Repo.reload!(model).metrics)
+      assert moved["y"] == 6
+      {_, top_a} = Canvas.pixel_position(a)
+      {_, top_b} = Canvas.pixel_position(b)
+      {_, top_c} = Canvas.pixel_position(moved)
+      assert top_c == div(top_a + top_b, 2)
+
+      {:ok, reopened, _} = live(conn, ~p"/models/#{model.id}")
+      assert has_element?(reopened, "#metrics-#{c["id"]}[data-grid-y='6'][style*='top: 152px;']")
+    end
+
+    test "position controls nudge by one dot and undo restores that exact position", %{
+      conn: conn,
+      model: model
+    } do
+      {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
+      id = hd(model.metrics)["id"]
+      assert has_element?(view, "#metrics-#{id}[style*='left: 32px;']")
+      view |> element("#move-right") |> render_click()
+      assert has_element?(view, "#metrics-#{id}[data-grid-x='1'][style*='left: 52px;']")
+      view |> element("#move-down") |> render_click()
+      assert has_element?(view, "#metrics-#{id}[data-grid-y='1'][style*='top: 52px;']")
+      view |> element("#undo") |> render_click()
+      assert has_element?(view, "#metrics-#{id}[data-grid-y='0'][style*='top: 32px;']")
+      view |> element("#save-model") |> render_click()
+      assert [%{"x" => 1, "y" => 0}] = Repo.reload!(model).metrics
+    end
+
+    test "invalid or unchanged moves do not create a draft or undo entry", %{
+      conn: conn,
+      model: model
+    } do
+      {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
+      id = hd(model.metrics)["id"]
+
+      for {x, y, metric_id} <- [
+            {0, 0, id},
+            {-1, 0, id},
+            {Canvas.max_x() + 1, 0, id},
+            {0, Canvas.max_y() + 1, id},
+            {"1.5", 0, id},
+            {1, 1, Ecto.UUID.generate()}
+          ] do
+        render_click(view, "move-metric", %{"id" => metric_id, "x" => x, "y" => y})
+        assert has_element?(view, "#save-status", "All changes saved")
+        assert has_element?(view, "#undo[disabled]")
+      end
+
+      assert Repo.reload!(model).metrics == model.metrics
     end
 
     test "deleting the last metric can be saved and reopened", %{conn: conn, model: model} do
@@ -217,6 +294,7 @@ defmodule MontyWeb.ModelLiveTest do
       assert_push_event(view, "download-model", %{name: "monty-model.json", content: content})
       data = Jason.decode!(content)
       assert data["format"] == "monty"
+      assert data["version"] == 2
       assert data["metrics"] == model.metrics
       refute Map.has_key?(data, "user_id")
       refute Map.has_key?(data, "user")

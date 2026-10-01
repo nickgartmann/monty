@@ -20,7 +20,7 @@ defmodule MontyWeb.ModelImportLiveTest do
       attrs =
         Map.merge(Examples.demo(), %{
           format: "monty",
-          version: 1,
+          version: 2,
           visibility: "public",
           user_id: Ecto.UUID.generate()
         })
@@ -34,6 +34,30 @@ defmodule MontyWeb.ModelImportLiveTest do
       assert model.visibility == :private
       assert model.user_id == user.id
       assert model.metrics == attrs.metrics
+    end
+
+    test "version 1 imports preserve older layouts on the new fine grid", %{
+      conn: conn,
+      user: user
+    } do
+      {:ok, view, _} = live(conn, ~p"/models/import")
+      legacy_metric = Examples.metric("A", "Legacy", "42", 1, 1)
+
+      json =
+        Jason.encode!(%{
+          format: "monty",
+          version: 1,
+          title: "Old layout",
+          metrics: [legacy_metric]
+        })
+
+      view |> form("#import-model-form", import: %{json: json}) |> render_submit()
+      {path, _} = assert_redirect(view)
+
+      assert {:ok, model} =
+               Models.get_model(Scope.for_user(user), String.replace_prefix(path, "/models/", ""))
+
+      assert [%{"x" => 14, "y" => 11}] = model.metrics
     end
 
     test "rejects malformed and unsupported data without leaving the form", %{conn: conn} do

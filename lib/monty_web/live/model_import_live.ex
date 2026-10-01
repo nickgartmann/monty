@@ -63,7 +63,7 @@ defmodule MontyWeb.ModelImportLive do
         />
         <p :if={@error} id="import-error" role="alert" class="mb-4 text-sm text-rose-600">{@error}</p>
         <div class="flex items-center justify-between gap-4">
-          <p class="text-xs text-slate-400">Up to 100 metrics · 2.5 MB · Monty format v1</p>
+          <p class="text-xs text-slate-400">Up to 100 metrics · 2.5 MB · Monty formats v1 & v2</p>
           <button
             type="submit"
             id="import-submit"

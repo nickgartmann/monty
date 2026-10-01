@@ -55,6 +55,20 @@ reauthentication use the generated Phoenix code.
 - Explore public models with SQLite full-text prefix search over titles
   and descriptions; search your own library separately.
 
+### Canvas movement
+
+Cards snap to the background dots in **20px increments** on both axes.
+Drag from any point on a card; the release preserves your grab offset and snaps
+to the nearest dot. Position controls and arrow keys on a focused card move one
+dot at a time; Shift + arrow moves five dots. The background scrolls with the
+cards, and dependency lines follow the cards' actual positions.
+
+Saved coordinates are fine-grid indices, not card-sized cells. New exports use
+Monty format v2; v1 imports convert older layouts to the nearest dot. Run
+`mix ecto.migrate` when upgrading an existing database to convert its saved
+positions and invalidate stale editor saves. The layout migration is one-way:
+back up the database before applying it if you need to return to the old canvas.
+
 ### Estimate syntax
 
 | Input | Interpretation |
@@ -103,6 +117,7 @@ discovery cards.
 - `Monty.Accounts`, `Monty.Accounts.Scope`, `MontyWeb.UserAuth`: generated auth.
 - `Monty.Models`: scope-based model persistence and access rules.
 - `Monty.Models.Model`: model and bounded metric-map validation.
+- `Monty.Canvas`: shared dot-grid spacing, bounds, card dimensions, and layout conversion.
 - `Monty.Simulation`: safe expression parsing and Monte Carlo computation.
 - `MontyWeb.ModelLive`: canvas, editor, simulation display, and save workflow.
 - `MontyWeb.ModelLibraryLive`: streamed catalog and library search.
@@ -121,6 +136,12 @@ derived in memory rather than persisted.
 ```sh
 mix precommit
 mix assets.build
+```
+
+Client-side snapping tests use Node's built-in runner, without npm dependencies:
+
+```sh
+node --test assets/js/canvas_geometry.test.mjs
 ```
 
 Tests cover generated accounts, ownership/visibility, FTS synchronization,

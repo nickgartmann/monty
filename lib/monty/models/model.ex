@@ -2,6 +2,7 @@ defmodule Monty.Models.Model do
   @moduledoc "A user-owned estimate with JSON-backed grid metrics."
   use Ecto.Schema
   import Ecto.Changeset
+  alias Monty.Canvas
 
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
@@ -86,12 +87,12 @@ defmodule Monty.Models.Model do
       "notes are too long"
     )
     |> maybe_error(
-      not (is_integer(metric["x"]) and metric["x"] in 0..11),
-      "x must be between 0 and 11"
+      not (is_integer(metric["x"]) and metric["x"] in 0..Canvas.max_x()),
+      "x must be between 0 and #{Canvas.max_x()}"
     )
     |> maybe_error(
-      not (is_integer(metric["y"]) and metric["y"] in 0..99),
-      "y must be between 0 and 99"
+      not (is_integer(metric["y"]) and metric["y"] in 0..Canvas.max_y()),
+      "y must be between 0 and #{Canvas.max_y()}"
     )
   end
 
