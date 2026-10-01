@@ -7,13 +7,21 @@ defmodule Monty.Simulation do
   the engine. Bare inputs are signed numbers (commas and `%` allowed) or
   `lower to upper`; formulas must start with `=`. Formulas support references,
   parentheses, unary signs, `+ - * / ^` (power is right-associative), and
-  `min`, `max`, `abs`, `sqrt`, `log` (natural log), `exp`, `mean`, `sum`.
-  Percentages are fractions (`25%` is `0.25`).
+  `min`, `max`, `abs`, `sqrt`, `log` (natural log), `exp`, `mean`, `sum`,
+  `sin`, `cos`, `tan`, `floor`, `ceil`, and `round`.
+  Abacus compiles formulas once per run; only an allowlisted numeric AST is
+  evaluated. Percentages are fractions (`25%` is `0.25`).
 
   An interval is the 5th–95th percentile of a normal distribution by default.
   `"lognormal"` interprets positive endpoints as its 5th–95th percentiles;
   `"uniform"` uses the endpoints as its full bounds. A distribution is only
-  meaningful for intervals. Results contain sample-aligned vectors, arithmetic
+  meaningful for intervals. Formulas can also draw from `normal(mean, sd)`,
+  `lognormal(log_mean, log_sd)`, `uniform(lower, upper)`, and
+  `pert(minimum, mode, maximum)` (beta-PERT with weight 4), with parameters
+  that may reference other metrics. PERT requires minimum < maximum and a
+  mode within those bounds. Each call makes a fresh draw; references
+  to a metric always reuse that metric's aligned sample.
+  Results contain sample-aligned vectors, arithmetic
   mean, median, empirical 5th/95th percentiles, and a 20-bin histogram spanning
   the observed minimum and maximum (constant values occupy the center bin).
   Direct dependencies are returned in first-appearance order.
@@ -26,7 +34,7 @@ defmodule Monty.Simulation do
   Missing or invalid keys receive a reserved `#metric_N` result key.
   """
 
-  alias Monty.Simulation.Parser
+  alias Monty.Simulation.{Beta, Parser}
 
   @max_metrics 100
   @max_samples 10_000
@@ -220,41 +228,30 @@ defmodule Monty.Simulation do
     do: {:ok, List.duplicate(number, count), state}
 
   defp sample(%{definition: {:interval, low, high}, distribution: distribution}, _, count, state) do
-    normal_parameters =
-      if distribution == :lognormal do
-        a = :math.log(low)
-        b = :math.log(high)
-        {(a + b) / 2.0, (b - a) / (2.0 * @z90)}
-      else
-        {low / 2.0 + high / 2.0, (high / 2.0 - low / 2.0) / @z90}
-      end
-
-    draw(count, state, fn state ->
+    parameters =
       case distribution do
         :uniform ->
-          {u, state} = :rand.uniform_s(state)
-          {safe_math(fn -> low * (1.0 - u) + high * u end), state}
+          [low, high]
 
         :normal ->
-          {z, state} = :rand.normal_s(state)
-          {mu, sigma} = normal_parameters
-          {safe_math(fn -> mu + sigma * z end), state}
+          [low / 2.0 + high / 2.0, (high / 2.0 - low / 2.0) / @z90]
 
         :lognormal ->
-          {z, state} = :rand.normal_s(state)
-          {mu, sigma} = normal_parameters
-          {safe_math(fn -> :math.exp(mu + sigma * z) end), state}
+          a = :math.log(low)
+          b = :math.log(high)
+          [a / 2.0 + b / 2.0, (b / 2.0 - a / 2.0) / @z90]
       end
-    end)
+
+    draw(count, state, &distribution_draw(distribution, parameters, &1))
   end
 
   defp sample(%{definition: {:formula, ast}}, vectors, count, state) do
-    case draw(count, 0, fn state_index ->
-           # Formulas make no random draws; use the index instead of RNG state here.
-           {evaluate(ast, vectors, state_index), state_index + 1}
+    case draw(count, {0, state}, fn {index, state} ->
+           {value, state} = evaluate(ast, vectors, index, state)
+           {value, {index + 1, state}}
          end) do
-      {:ok, values, _index} -> {:ok, values, state}
-      {:error, reason, _index} -> {:error, reason, state}
+      {:ok, values, {_index, state}} -> {:ok, values, state}
+      {:error, reason, {_index, state}} -> {:error, reason, state}
     end
   end
 
@@ -273,78 +270,134 @@ defmodule Monty.Simulation do
     end
   end
 
-  defp evaluate({:number, number}, _, _), do: {:ok, number}
-  defp evaluate({:ref, key}, vectors, index), do: {:ok, elem(Map.fetch!(vectors, key), index)}
+  defp evaluate({:number, number}, _, _, state), do: {{:ok, number}, state}
 
-  defp evaluate({:unary, op, ast}, vectors, index) do
-    with {:ok, number} <- evaluate(ast, vectors, index) do
-      finite(if(op == :subtract, do: -number, else: number))
+  defp evaluate({:ref, key}, vectors, index, state),
+    do: {{:ok, elem(Map.fetch!(vectors, key), index)}, state}
+
+  defp evaluate({:unary, op, ast}, vectors, index, state) do
+    case evaluate(ast, vectors, index, state) do
+      {{:ok, number}, state} ->
+        {finite(if(op == :subtract, do: -number, else: number)), state}
+
+      error ->
+        error
     end
   end
 
-  defp evaluate({:binary, op, left, right}, vectors, index) do
-    with {:ok, a} <- evaluate(left, vectors, index),
-         {:ok, b} <- evaluate(right, vectors, index) do
-      safe_math(fn ->
-        case op do
-          :add -> a + b
-          :subtract -> a - b
-          :multiply -> a * b
-          :divide when b == 0.0 -> throw(:division_by_zero)
-          :divide -> a / b
-          :power -> :math.pow(a, b)
-        end
-      end)
-    end
-  catch
-    :division_by_zero -> {:error, "Division by zero"}
-  end
+  defp evaluate({:binary, op, left, right}, vectors, index, state) do
+    case evaluate_args([left, right], vectors, index, state) do
+      {{:ok, [_a, b]}, state} when op == :divide and b == 0.0 ->
+        {{:error, "Division by zero"}, state}
 
-  defp evaluate({:call, function, args}, vectors, index) do
-    with {:ok, values} <- evaluate_args(args, vectors, index) do
-      safe_math(fn ->
-        case {function, values} do
-          {:abs, [value]} ->
-            abs(value)
+      {{:ok, [a, b]}, state} ->
+        result =
+          safe_math(fn ->
+            case op do
+              :add -> a + b
+              :subtract -> a - b
+              :multiply -> a * b
+              :divide -> a / b
+              :power -> :math.pow(a, b)
+            end
+          end)
 
-          {:sqrt, [value]} ->
-            :math.sqrt(value)
+        {result, state}
 
-          {:log, [value]} ->
-            :math.log(value)
-
-          {:exp, [value]} ->
-            :math.exp(value)
-
-          {:sum, values} ->
-            Enum.reduce(values, 0.0, &+/2)
-
-          {:mean, values} ->
-            count = length(values)
-            Enum.reduce(values, 0.0, fn value, sum -> sum + value / count end)
-
-          {:min, values} ->
-            Enum.min(values)
-
-          {:max, values} ->
-            Enum.max(values)
-        end
-      end)
+      error ->
+        error
     end
   end
 
-  defp evaluate_args(args, vectors, index) do
-    Enum.reduce_while(args, {:ok, []}, fn ast, {:ok, values} ->
-      case evaluate(ast, vectors, index) do
-        {:ok, value} -> {:cont, {:ok, [value | values]}}
-        {:error, _} = error -> {:halt, error}
+  defp evaluate({:call, function, args}, vectors, index, state) do
+    case evaluate_args(args, vectors, index, state) do
+      {{:ok, values}, state} when function in [:normal, :lognormal, :uniform, :pert] ->
+        distribution_draw(function, values, state)
+
+      {{:ok, values}, state} ->
+        {safe_math(fn -> numeric_function(function, values) end), state}
+
+      error ->
+        error
+    end
+  end
+
+  defp evaluate_args(args, vectors, index, state) do
+    Enum.reduce_while(args, {{:ok, []}, state}, fn ast, {{:ok, values}, state} ->
+      case evaluate(ast, vectors, index, state) do
+        {{:ok, value}, state} -> {:cont, {{:ok, [value | values]}, state}}
+        error -> {:halt, error}
       end
     end)
     |> case do
-      {:ok, reversed} -> {:ok, Enum.reverse(reversed)}
+      {{:ok, reversed}, state} -> {{:ok, Enum.reverse(reversed)}, state}
       error -> error
     end
   end
+
+  defp numeric_function(:abs, [value]), do: abs(value)
+  defp numeric_function(:round, [value]), do: round(value)
+
+  defp numeric_function(function, [value])
+       when function in [:sqrt, :log, :exp, :sin, :cos, :tan, :floor, :ceil],
+       do: apply(:math, function, [value])
+
+  defp numeric_function(:sum, values), do: Enum.reduce(values, 0.0, &+/2)
+
+  defp numeric_function(:mean, values) do
+    count = length(values)
+    Enum.reduce(values, 0.0, fn value, sum -> sum + value / count end)
+  end
+
+  defp numeric_function(:min, values), do: Enum.min(values)
+  defp numeric_function(:max, values), do: Enum.max(values)
+
+  defp distribution_draw(:uniform, [low, high], state) when low < high do
+    {u, state} = :rand.uniform_s(state)
+    {safe_math(fn -> bounded_interpolation(low, high, u) end), state}
+  end
+
+  defp distribution_draw(:uniform, _, state),
+    do: {{:error, "Uniform lower bound must be less than upper bound"}, state}
+
+  defp distribution_draw(:pert, [low, mode, high], state) do
+    cond do
+      low >= high ->
+        {{:error, "PERT minimum must be less than maximum"}, state}
+
+      mode < low or mode > high ->
+        {{:error, "PERT mode must be between minimum and maximum"}, state}
+
+      true ->
+        position = relative_position(mode, low, high)
+        alpha = 1.0 + 4.0 * position
+        beta = 1.0 + 4.0 * (1.0 - position)
+
+        case Beta.sample(alpha, beta, state) do
+          {{:ok, weight}, state} ->
+            {safe_math(fn -> bounded_interpolation(low, high, weight) end), state}
+
+          error ->
+            error
+        end
+    end
+  end
+
+  defp distribution_draw(function, [mu, sigma], state)
+       when function in [:normal, :lognormal] and sigma >= 0.0 do
+    {z, state} = :rand.normal_s(state)
+
+    result =
+      safe_math(fn ->
+        value = mu + sigma * z
+        if function == :lognormal, do: :math.exp(value), else: value
+      end)
+
+    {result, state}
+  end
+
+  defp distribution_draw(_, _, state),
+    do: {{:error, "Standard deviation must be non-negative"}, state}
 
   defp safe_math(fun) do
     try do
@@ -359,6 +412,29 @@ defmodule Monty.Simulation do
     do: {:ok, value * 1.0}
 
   defp finite(_), do: {:error, "Non-finite or overflow result"}
+
+  defp bounded_interpolation(low, high, weight) do
+    value =
+      if low >= 0.0 or high <= 0.0 do
+        # The difference is safe for same-sign endpoints. This avoids rounding
+        # both weighted endpoints separately, which distorts subnormal draws.
+        low + (high - low) * weight
+      else
+        # Opposite-sign differences can overflow; use a convex combination.
+        low * (1.0 - weight) + high * weight
+      end
+
+    min(high, max(low, value))
+  end
+
+  defp relative_position(value, low, high) do
+    # Halve only when subtracting opposite extreme signs could overflow.
+    if low < 0.0 and high > 0.0 and (low < -@max_float / 2 or high > @max_float / 2) do
+      (value / 2.0 - low / 2.0) / (high / 2.0 - low / 2.0)
+    else
+      (value - low) / (high - low)
+    end
+  end
 
   defp summary(samples, dependencies) do
     sorted = Enum.sort(samples)
@@ -394,15 +470,7 @@ defmodule Monty.Simulation do
           if minimum == maximum do
             10
           else
-            # Halve only when subtracting opposite extreme signs could overflow.
-            fraction =
-              if minimum < 0.0 and maximum > 0.0 and
-                   (minimum < -@max_float / 2 or maximum > @max_float / 2) do
-                (value / 2.0 - minimum / 2.0) / (maximum / 2.0 - minimum / 2.0)
-              else
-                (value - minimum) / (maximum - minimum)
-              end
-
+            fraction = relative_position(value, minimum, maximum)
             min(19, max(0, trunc(fraction * 20)))
           end
 

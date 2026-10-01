@@ -40,6 +40,7 @@ defmodule Monty.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      {:abacus, "~> 2.2"},
       {:bcrypt_elixir, "~> 3.0"},
       {:phoenix, "~> 1.8.15"},
       {:phoenix_ecto, "~> 4.5"},

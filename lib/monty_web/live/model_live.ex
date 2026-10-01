@@ -636,9 +636,23 @@ defmodule MontyWeb.ModelLive do
           <strong>A spreadsheet for things you don't know.</strong>
           Enter a number (<code>42</code>), a range (<code>10 to 20</code>), or a formula (<code>=A * B</code>).
           Normal and lognormal ranges describe a 90% interval; uniform ranges are hard bounds.
+          <span id="distribution-guide" class="block">
+            For explicit distributions, use <code>=normal(100, 15)</code>
+            (mean, standard deviation), <code>=lognormal(0, 1)</code>
+            (mean and standard deviation in log space), or <code>=uniform(10, 20)</code>
+            (hard bounds). Parameters can reference cards, like <code>=normal(A, B)</code>.
+            The range selector applies only to <code>lower to upper</code>
+            inputs.
+          </span>
+          <span id="pert-guide" class="block">
+            For a bounded estimate with a most likely value, use <code>=pert(10, 15, 30)</code>
+            (minimum, mode, maximum). PERT uses a smooth beta distribution with weighting 4;
+            the minimum must be less than the maximum, and the mode must lie between them.
+            Metric references work too: <code>=pert(A, B, C)</code>.
+          </span>
           References use the permanent letter on each card. Arithmetic, parentheses, <code>min</code>, <code>max</code>, <code>abs</code>, <code>sqrt</code>, <code>log</code>, <code>exp</code>, <code>sum</code>, and
           <code>mean</code>
-          are supported.
+          are supported, along with <code>sin</code>, <code>cos</code>, <code>tan</code>, <code>floor</code>, <code>ceil</code>, and <code>round</code>.
           Changes preview immediately; save to keep them. Move cards directly and use the shadow
           to preview where they will snap to the background dots
           ({Canvas.grid_step()}px). Use the position controls or arrow keys on a focused card to move one dot;
@@ -780,8 +794,9 @@ defmodule MontyWeb.ModelLive do
                   maxlength="1000"
                   readonly={!@editable?}
                 />
-                <p class="-mt-2 mb-5 text-[11px] leading-5 text-slate-400">
-                  Try <code>10 to 20</code>, <code>5%</code>, or <code>=A * B</code>.
+                <p id="estimate-help" class="-mt-2 mb-5 text-[11px] leading-5 text-slate-400">
+                  Try <code>10 to 20</code>, <code>5%</code>, <code>=A * B</code>,
+                  or <code>=pert(10, 15, 30)</code>.
                 </p>
                 <.input
                   field={@metric_form[:distribution]}
@@ -794,6 +809,13 @@ defmodule MontyWeb.ModelLive do
                   ]}
                   disabled={!@editable?}
                 />
+                <p
+                  id="range-distribution-help"
+                  class="-mt-2 mb-5 text-[11px] leading-5 text-slate-400"
+                >
+                  Applies only to ranges like <code>10 to 20</code>.
+                  Distribution calls in formulas use their own parameters.
+                </p>
                 <.input
                   field={@metric_form[:notes]}
                   label="Notes & assumptions"
