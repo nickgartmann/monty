@@ -1,0 +1,159 @@
+# Monty
+
+**A visual spreadsheet for uncertainty, built as one Phoenix LiveView application.**
+
+Monty rebuilds the core modeling workflow of
+[guesstimate-app](https://github.com/getguesstimate/guesstimate-app) and
+[guesstimate-server](https://github.com/getguesstimate/guesstimate-server).
+There is no separate React application, Rails API, Auth0/NextAuth integration,
+or Algolia account. LiveView owns the UI; Elixir owns simulation and
+authorization; SQLite stores accounts and models and provides FTS5 search.
+
+## Run locally
+
+Requires Elixir 1.17+ and a compatible Erlang/OTP installation.
+
+```sh
+mix setup
+mix phx.server
+```
+
+Open [localhost:4000](http://localhost:4000). `PORT=4100 mix phx.server` uses
+another port. No database service, Node development server, or service keys
+are needed. `mix setup` creates the SQLite database, migrates it, builds the
+assets, and seeds three original public examples. Seeds are idempotent and
+never reset existing models.
+
+Try `/try` without an account. Sandbox changes are held in the LiveView
+session and are lost on reload unless you export or save a private copy.
+
+### Accounts
+
+Authentication was generated using:
+
+```sh
+mix phx.gen.auth Accounts User users --live
+```
+
+Register with an email address, open the confirmation message in
+[/dev/mailbox](http://localhost:4000/dev/mailbox), and confirm the link.
+Login supports one-time email links. After confirming an account, set an
+optional password in account settings. Password hashing, signed sessions,
+remember-me cookies, email-change confirmation, and sensitive-action
+reauthentication use the generated Phoenix code.
+
+## Modeling
+
+- Add, rename, delete, drag, or keyboard-position metric cards.
+- Edit point estimates, uncertain ranges, and formulas in the details panel.
+- Preview correlated Monte Carlo outcomes, histograms, means, and
+  5th/50th/95th percentiles.
+- Save models, undo the last 20 metric edits in the current session, and
+  reopen saved assumptions.
+- Duplicate readable models into your own private workspace.
+- Export and import versioned Monty JSON (up to 2.5 MB / 100 metrics).
+- Explore public models with SQLite full-text prefix search over titles
+  and descriptions; search your own library separately.
+
+### Estimate syntax
+
+| Input | Interpretation |
+| --- | --- |
+| `42`, `1,000`, `1e3` | Point estimate |
+| `5%` | `0.05` |
+| `10 to 20` + Normal | 90% confidence interval (not hard bounds) |
+| `10 to 20` + Lognormal | Positive, skewed 90% interval |
+| `10 to 20` + Uniform | Full lower and upper bounds |
+| `=A * B` | Multiply the sampled values of two metrics |
+| `=max(A - B, 0)` | A safe, allowlisted function |
+
+Formulas support `+ - * / ^`, parentheses, and `min`, `max`, `abs`,
+`sqrt`, `log`, `exp`, `sum`, and `mean`. Metric letter references are
+permanent even when names change. A formula referencing a deleted metric
+shows an error; new cards do not take a key that is still referenced.
+Cycles, unknown references, invalid distributions, and numeric errors are
+shown on the affected cards. Formulas are parsed, never evaluated as Elixir
+or JavaScript.
+
+The editor computes 1,000 correlated draws using a fixed seed, so comparing
+edits is stable. Repeated references use the same sampled value within each
+draw (`=A - A` is always zero). Normal draws can fall outside the entered
+90% interval, including below zero. These simulations are approximate
+decision aids, not guarantees.
+
+Edits preview immediately, but are persisted only with **Save model** or
+**Apply & save changes**. The status indicator shows unsaved changes.
+Saving is owner-only and checks `lock_version`; stale sessions cannot
+silently overwrite another save. If a conflict occurs, export your draft
+before reloading.
+
+### Visibility
+
+- **Private** (default): readable and editable only by the owner.
+- **Unlisted**: readable by anyone with the model URL, but absent from
+  public discovery. An unlisted URL is **not** a revocable secret token.
+- **Public**: readable by everyone and searchable in Explore.
+
+Only owners can save or delete models, regardless of visibility. Copies
+and imports are always private. Account emails are not published on
+discovery cards.
+
+## Implementation map
+
+- `Monty.Accounts`, `Monty.Accounts.Scope`, `MontyWeb.UserAuth`: generated auth.
+- `Monty.Models`: scope-based model persistence and access rules.
+- `Monty.Models.Model`: model and bounded metric-map validation.
+- `Monty.Simulation`: safe expression parsing and Monte Carlo computation.
+- `MontyWeb.ModelLive`: canvas, editor, simulation display, and save workflow.
+- `MontyWeb.ModelLibraryLive`: streamed catalog and library search.
+- `Monty.ModelFile`, `MontyWeb.ModelImportLive`: versioned JSON round-tripping.
+- `priv/repo/migrations`: auth schema, models, FTS5 table and sync triggers.
+
+Public LiveViews are in the generated `:current_user` session with
+`:mount_current_scope`; creation, import, library, and account settings use
+`:require_authenticated_user`. Context functions recheck persisted
+ownership on every write; hiding buttons is not the authorization boundary.
+Metrics are stored as validated JSON maps in their model, while samples are
+derived in memory rather than persisted.
+
+## Verification
+
+```sh
+mix precommit
+mix assets.build
+```
+
+Tests cover generated accounts, ownership/visibility, FTS synchronization,
+malicious search input, simulation semantics and errors, editor interactions,
+stale saves, and JSON round-tripping.
+
+## Deployment and remaining scope
+
+This is a working core rebuild, **not complete feature parity or a drop-in
+legacy replacement**. Organization memberships and reusable facts, tokenized
+private sharing, checkpoint history, multi-user live collaboration, sensitivity
+analysis, empirical-data/beta distributions, billing, and migration of existing
+Guesstimate databases are not implemented. Monty imports its own versioned
+exports, not legacy graph JSON or arbitrary Math.js expressions.
+
+Before deploying:
+
+1. Set `DATABASE_PATH` to a persistent writable SQLite file, and configure
+   backups (including SQLite WAL considerations).
+2. Set `SECRET_KEY_BASE`, `PHX_HOST`, and `PHX_SERVER=true`. Terminate HTTPS
+   and configure secure forwarding according to the Phoenix deployment guide.
+3. Configure a production Swoosh email adapter in `config/runtime.exs` and a
+   real sender in `Monty.Accounts.UserNotifier`. The local mailbox adapter and
+   placeholder sender are **development-only**. Keep credentials in environment
+   variables; do not commit them. Use `Swoosh.ApiClient.Req` for HTTP adapters.
+4. Add signup/login/email rate limiting and operational monitoring before
+   exposing authentication to the public internet.
+5. Run migrations and `mix assets.deploy`; keep SQLite on a single writable
+   application host or explicitly design a replication strategy.
+
+The upstream repositories report MIT licenses. This implementation uses
+original code, examples, and visuals rather than copying their source or
+branding. Any future upstream code/assets imported here must preserve the
+applicable license notices.
+
+See the [Phoenix deployment guide](https://phoenix.hexdocs.pm/deployment.html).
