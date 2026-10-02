@@ -28,3 +28,7 @@ export function snapPosition({left, top}, {step, padding, maxX, maxY}) {
     y: Math.round((top - padding) / step),
   }, {maxX, maxY})
 }
+
+export function centeredPosition({left, top}, {width, height}, geometry) {
+  return snapPosition({left: left - width / 2, top: top - height / 2}, geometry)
+}

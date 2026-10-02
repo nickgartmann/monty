@@ -58,9 +58,9 @@ defmodule Monty.Examples do
     ]
   end
 
-  # Keep presets spaced like the original layouts; movement itself uses dot indices.
+  # Preset spacing follows card dimensions; saved and imported coordinates remain unchanged.
   defp preset_metric(key, name, input, column, row, distribution \\ "normal") do
-    {x, y} = Monty.Canvas.from_legacy_position(column, row)
+    {x, y} = Monty.Canvas.default_position(column, row)
     metric(key, name, input, x, y, distribution)
   end
 

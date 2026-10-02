@@ -72,8 +72,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   background-position: var(--canvas-dot-offset, 2px) var(--canvas-dot-offset, 2px);
 }
 .metric-card {
-  position: absolute; width: var(--metric-width, 240px); height: var(--metric-height, 188px); text-align: left; border: 1px solid #dce6df;
-  border-radius: 12px; background: #fff; padding: 16px 18px; box-shadow: 0 3px 8px #123a2007;
+  position: absolute; width: var(--metric-width, 240px); height: var(--metric-height, 120px); text-align: left; border: 1px solid #dce6df;
+  border-radius: 10px; background: #fff; padding: 10px 12px; box-shadow: 0 3px 8px #123a2007;
   transition: border-color .15s, box-shadow .15s;
 }
 .metric-card:hover { border-color: #9ebfb0; box-shadow: 0 5px 16px #123a2010; }
@@ -91,7 +91,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .metric-card.metric-card-dragging { transition: transform 60ms ease-out, box-shadow .12s ease-out; }
 .canvas-drag-layer { position: fixed; z-index: 20; overflow: hidden; pointer-events: none; }
 .canvas-drop-preview {
-  position: absolute; pointer-events: none; border: none; border-radius: 12px;
+  position: absolute; pointer-events: none; border: none; border-radius: 10px;
   background: #0d948812; box-shadow: 0 6px 20px #123a201c;
   transition: transform 60ms ease-out; will-change: transform;
 }
@@ -99,7 +99,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   background: #e11d4812; box-shadow: 0 6px 20px #e11d4820;
 }
 .metric-detail { border-left: 1px solid #e0e8e2; background: #fff; padding: 26px 24px; }
-.histogram { display: flex; align-items: end; gap: 2px; height: 42px; width: 100%; }
+.histogram { display: flex; align-items: end; gap: 2px; height: 20px; width: 100%; }
 .histogram span { flex: 1; min-width: 1px; background: #67b5a0; border-radius: 2px 2px 0 0; }
 .histogram-lg { height: 110px; gap: 3px; }
 .histogram-lg span { background: #0d9488; }

@@ -7,7 +7,8 @@ defmodule Monty.Canvas do
   @grid_step 20
   @padding 32
   @card_width 240
-  @card_height 188
+  @card_height 120
+  @card_gap 40
   @link_bend 50
   @max_x 200
   @max_y 1200
@@ -23,6 +24,11 @@ defmodule Monty.Canvas do
   def link_bend, do: @link_bend
   def max_x, do: @max_x
   def max_y, do: @max_y
+
+  @doc "A comfortably spaced preset slot using the current card dimensions."
+  def default_position(column, row) do
+    {column * default_column_step(), row * default_row_step()}
+  end
 
   @doc "Converts a version 1 grid origin to the closest fine-grid origin."
   def from_legacy_position(x, y) when is_integer(x) and is_integer(y) do
@@ -56,8 +62,8 @@ defmodule Monty.Canvas do
     |> List.first()
   end
 
-  defp default_column_step, do: div(@legacy_column_step, @grid_step)
-  defp default_row_step, do: div(@legacy_row_step + div(@grid_step, 2), @grid_step)
+  defp default_column_step, do: div(@card_width + @card_gap + @grid_step - 1, @grid_step)
+  defp default_row_step, do: div(@card_height + @card_gap + @grid_step - 1, @grid_step)
 
   defp overlaps?(metric, x, y) do
     abs(coordinate(metric, :x) - x) * @grid_step < @card_width and

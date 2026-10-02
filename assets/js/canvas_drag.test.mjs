@@ -265,6 +265,20 @@ test("touch and pen use the same original-card movement and single snapped drop"
   }
 })
 
+test("snap preview uses the actual compact card dimensions", () => {
+  const f = fixture()
+  f.card.rect.height = 120
+  f.card.rect.bottom = f.card.rect.top + 120
+  f.pointer("pointerdown", 182, 160)
+  f.pointer("pointermove", 207, 171)
+  assert.equal(f.drag.preview.style.width, "240px")
+  assert.equal(f.drag.preview.style.height, "120px")
+  f.pointer("pointerup", 207, 171)
+  assert.deepEqual(f.moves[0].position, {x: 3, y: 2})
+  f.moves[0].done()
+  f.drag.destroy()
+})
+
 test("scroll and canvas bounds refresh with the last pointer coordinates", () => {
   const f = fixture()
   f.pointer("pointerdown", 182, 160)

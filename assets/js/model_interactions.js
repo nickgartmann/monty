@@ -1,7 +1,7 @@
 // LiveView owns all cards and results. This ignored event bridge only handles
 // pointer gestures, downloads, and an asset-compatibility notice. Persisted card
 // positions and content remain server-owned.
-import {clampPosition, readGeometry} from "./canvas_geometry.mjs"
+import {centeredPosition, clampPosition, readGeometry} from "./canvas_geometry.mjs"
 import {CanvasDrag} from "./canvas_drag.mjs"
 
 export const ModelInteractions = {
@@ -24,6 +24,36 @@ export const ModelInteractions = {
       },
     })
     this.canvasDrag.mount()
+    this.dblclick = event => {
+      const element = canvas()
+      const pane = element?.closest(".canvas-scroll")
+      if (this.canvasDrag.busy || element?.dataset.editable !== "true" || !pane?.contains(event.target)) return
+      if (event.target.closest("[data-metric-id]")) return
+      const grid = geometry(element)
+      const width = Number(element.dataset.cardWidth), height = Number(element.dataset.cardHeight)
+      if (!grid || !Number.isSafeInteger(width) || width <= 0 || !Number.isSafeInteger(height) || height <= 0) {
+        this.showCompatibilityNotice()
+        return
+      }
+      event.preventDefault()
+      const rect = element.getBoundingClientRect()
+      const position = centeredPosition({
+        left: event.clientX - rect.left,
+        top: event.clientY - rect.top,
+      }, {width, height}, grid)
+      const previousSelection = document.getElementById("metric-id")?.value
+      this.pushEvent("add-metric", position, () => {
+        if (!this.el.isConnected) return
+        const selected = document.getElementById("metric-id")?.value
+        if (!selected || selected === previousSelection) return
+        const name = document.getElementById("metric_name")
+        const bounds = name?.getBoundingClientRect()
+        if (bounds && bounds.top >= 0 && bounds.bottom <= window.innerHeight) {
+          name.focus({preventScroll: true})
+          name.select()
+        }
+      })
+    }
     this.keydown = event => {
       if (this.canvasDrag.busy) return
       const card = event.target.closest("[data-metric-id][data-movable=true], [data-metric-id][draggable=true]")
@@ -45,6 +75,7 @@ export const ModelInteractions = {
         this.pushEvent("move-metric", {id: card.dataset.metricId, ...position})
       }
     }
+    document.addEventListener("dblclick", this.dblclick)
     document.addEventListener("keydown", this.keydown)
     this.handleEvent("download-model", ({name, content}) => {
       const url = URL.createObjectURL(new Blob([content], {type: "application/json"}))
@@ -76,6 +107,7 @@ export const ModelInteractions = {
   },
   destroyed() {
     this.canvasDrag?.destroy()
+    document.removeEventListener("dblclick", this.dblclick)
     document.removeEventListener("keydown", this.keydown)
   }
 }

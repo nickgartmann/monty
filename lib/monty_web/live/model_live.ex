@@ -66,11 +66,11 @@ defmodule MontyWeb.ModelLive do
     edit_metric(socket, params, true)
   end
 
-  def handle_event("add-metric", _params, socket) do
+  def handle_event("add-metric", params, socket) do
     with true <- socket.assigns.editable?,
-         true <- length(socket.assigns.model.metrics) < 100 do
+         true <- length(socket.assigns.model.metrics) < 100,
+         {:ok, {x, y}} <- new_metric_position(params, socket.assigns.model.metrics) do
       metrics = socket.assigns.model.metrics
-      {x, y} = Canvas.free_position(metrics)
       metric = Examples.metric(next_key(metrics), "New metric", "0", x, y)
 
       {:noreply,
@@ -80,7 +80,12 @@ defmodule MontyWeb.ModelLive do
        |> select_metric(metric)
        |> restream()}
     else
-      _ -> {:noreply, put_flash(socket, :error, "You cannot add more metrics to this model.")}
+      {:error, :position} ->
+        {:noreply,
+         put_flash(socket, :error, "Choose a valid grid point not already used by another card.")}
+
+      _ ->
+        {:noreply, put_flash(socket, :error, "You cannot add more metrics to this model.")}
     end
   end
 
@@ -382,6 +387,25 @@ defmodule MontyWeb.ModelLive do
     socket |> select_metric(metric) |> restream()
   end
 
+  defp new_metric_position(params, metrics) do
+    case {Map.fetch(params, "x"), Map.fetch(params, "y")} do
+      {:error, :error} ->
+        {:ok, Canvas.free_position(metrics)}
+
+      {{:ok, x}, {:ok, y}} ->
+        with {:ok, x} <- coordinate(x, Canvas.max_x()),
+             {:ok, y} <- coordinate(y, Canvas.max_y()),
+             false <- Enum.any?(metrics, &(&1["x"] == x && &1["y"] == y)) do
+          {:ok, {x, y}}
+        else
+          _ -> {:error, :position}
+        end
+
+      _ ->
+        {:error, :position}
+    end
+  end
+
   defp coordinate(value, max) when is_integer(value) and value >= 0 and value <= max,
     do: {:ok, value}
 
@@ -615,6 +639,7 @@ defmodule MontyWeb.ModelLive do
             <.icon name="hero-arrow-uturn-left" class="size-4" />
           </button>
           <span class="ml-2 hidden text-xs text-slate-400 sm:block">{length(@model.metrics)} metrics · {@samples} correlated draws</span>
+          <span :if={@editable?} class="hidden text-xs text-slate-400 lg:block">Double-click canvas to add</span>
           <div class="ml-auto flex items-center gap-2">
             <button id="resample" phx-click="resample" class="button-ghost"><.icon
               name="hero-arrow-path"
@@ -667,6 +692,9 @@ defmodule MontyWeb.ModelLive do
               class="canvas-surface relative"
               style={canvas_style(@canvas_width, @canvas_height)}
               data-model-canvas
+              data-editable={to_string(@editable?)}
+              data-card-width={Canvas.card_width()}
+              data-card-height={Canvas.card_height()}
               data-grid-step={Canvas.grid_step()}
               data-grid-padding={Canvas.padding()}
               data-grid-max-x={Canvas.max_x()}
@@ -722,30 +750,37 @@ defmodule MontyWeb.ModelLive do
                   aria-pressed={to_string(card.selected?)}
                   aria-label={"Edit #{card.metric["name"]}, reference #{card.metric["key"]}"}
                 >
-                  <div class="mb-3 flex items-center justify-between gap-2">
-                    <span class="truncate text-xs font-semibold text-slate-600">{card.metric["name"]}</span>
-                    <span class="rounded bg-teal-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-teal-700">{card.metric[
+                  <div class="mb-0.5 flex items-center justify-between gap-2">
+                    <span class="truncate text-xs font-semibold leading-4 text-slate-600">{card.metric[
+                      "name"
+                    ]}</span>
+                    <span class="rounded bg-teal-50 px-1.5 font-mono text-[10px] font-semibold leading-4 text-teal-700">{card.metric[
                       "key"
                     ]}</span>
                   </div>
                   <%= if Map.has_key?(card.result, :error) do %>
-                    <div class="my-5 flex items-center gap-2 text-xs leading-5 text-rose-600">
-                      <.icon name="hero-exclamation-circle" class="size-5 shrink-0" />{card.result.error}
+                    <div class="my-2 flex items-start gap-2 text-[11px] leading-4 text-rose-600">
+                      <.icon name="hero-exclamation-circle" class="size-4 shrink-0" />
+                      <span class="line-clamp-2">{card.result.error}</span>
                     </div>
                   <% else %>
-                    <div class="flex items-baseline gap-2">
-                      <span class="text-2xl font-semibold tracking-tight text-slate-800">{format_value(
-                        card.result.mean
-                      )}</span><span class="text-[10px] text-slate-400">mean</span>
+                    <div
+                      data-metric-summary
+                      class="text-[22px] font-semibold leading-6 tracking-tight text-slate-800"
+                    >
+                      {format_value(card.result.mean)}
                     </div>
-                    <div class="mt-3"><.histogram result={card.result} /></div>
-                    <div class="mt-2 flex justify-between font-mono text-[10px] text-slate-400">
+                    <div class="mt-0.5"><.histogram result={card.result} /></div>
+                    <div class="mt-0.5 flex justify-between font-mono text-[10px] leading-3 text-slate-400">
                       <span>{format_value(card.result.low)}</span><span>{format_value(
                         card.result.high
                       )}</span>
                     </div>
                   <% end %>
-                  <div class="mt-2 truncate border-t border-slate-100 pt-2 font-mono text-[10px] text-slate-400">
+                  <div
+                    data-metric-input
+                    class="mt-0.5 truncate border-t border-slate-100 pt-0.5 font-mono text-[10px] leading-3 text-slate-400"
+                  >
                     {card.metric["input"]}
                   </div>
                 </button>

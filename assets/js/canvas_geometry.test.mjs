@@ -1,8 +1,14 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import {clampPosition, readGeometry, snapPosition} from "./canvas_geometry.mjs"
+import {centeredPosition, clampPosition, readGeometry, snapPosition} from "./canvas_geometry.mjs"
 
 const geometry = {step: 20, padding: 32, maxX: 200, maxY: 1200}
+
+test("new cards are centered on the double-click point and snapped to the grid", () => {
+  assert.deepEqual(centeredPosition({left: 392, top: 212}, {width: 240, height: 120}, geometry), {x: 12, y: 6})
+  assert.deepEqual(centeredPosition({left: 10, top: 10}, {width: 240, height: 120}, geometry), {x: 0, y: 0})
+  assert.deepEqual(centeredPosition({left: 100_000, top: 100_000}, {width: 240, height: 120}, geometry), {x: 200, y: 1200})
+})
 
 test("geometry is read from the current server-rendered canvas", () => {
   assert.deepEqual(readGeometry({gridStep: "20", gridPadding: "32", gridMaxX: "200", gridMaxY: "1200"}), geometry)

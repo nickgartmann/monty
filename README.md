@@ -58,6 +58,12 @@ reauthentication use the generated Phoenix code.
 ### Canvas movement
 
 Cards snap to the background dots in **20px increments** on both axes.
+Compact cards are 240 × 120px, with a small histogram and the estimate/formula
+still visible. The details panel keeps its larger chart. New presets and added
+cards use spacing based on these dimensions; existing model positions are not rearranged.
+Double-click empty canvas space to add a metric centered at that point, snapped
+to the dot grid. The new card is selected for editing. Double-clicking an existing
+card does not add another, and shared read-only models cannot create cards.
 Drag the card itself from any point: it follows the pointer without a browser
 ghost, while a subtle shadow previews the snapped drop position. Releasing
 preserves your grab offset and snaps to the nearest dot; Escape cancels a drag.

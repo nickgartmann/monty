@@ -4,13 +4,17 @@ defmodule MontyWeb.ModelLiveTest do
   import Phoenix.LiveViewTest
   import Monty.ModelsFixtures
 
-  alias Monty.{Canvas, Models, Repo}
+  alias Monty.{Canvas, Examples, Models, Repo}
   alias Monty.Accounts.Scope
 
   test "sandbox renders and calculates without an account", %{conn: conn} do
     {:ok, view, _} = live(conn, ~p"/try")
     assert has_element?(view, "#model-canvas")
+    assert has_element?(view, "#model-canvas[style*='--metric-height: 120px;']")
     assert has_element?(view, "#metrics button", "Cash in the bank")
+    assert has_element?(view, "#metrics [data-metric-summary]", "450.0k")
+    assert has_element?(view, "#metrics [data-metric-input]", "450000")
+    refute has_element?(view, "#metrics button span", "mean")
     assert has_element?(view, "#metric-statistics")
     assert has_element?(view, "#duplicate-model")
     refute has_element?(view, "#save-model")
@@ -18,6 +22,7 @@ defmodule MontyWeb.ModelLiveTest do
 
     view |> form("#metric-form", metric: %{name: "Savings", input: "100"}) |> render_change()
     assert has_element?(view, "#stat-median", "100.0")
+    assert has_element?(view, "#metrics [data-metric-summary]", "100.0")
     assert has_element?(view, "#metrics button", "Savings")
     view |> element("#formula-help") |> render_click()
     assert has_element?(view, "#formula-guide")
@@ -42,7 +47,9 @@ defmodule MontyWeb.ModelLiveTest do
     assert has_element?(view, "#metric_name[readonly]")
     assert has_element?(view, "#metrics button[draggable=false]")
     assert has_element?(view, "#metrics button[data-movable=false]")
+    assert has_element?(view, "#model-canvas[data-editable=false]")
     render_click(view, "add-metric")
+    render_click(view, "add-metric", %{"x" => 10, "y" => 12})
     render_click(view, "delete-metric", %{"id" => hd(model.metrics)["id"]})
     render_click(view, "move-metric", %{"id" => hd(model.metrics)["id"], "x" => 5, "y" => 6})
 
@@ -138,6 +145,87 @@ defmodule MontyWeb.ModelLiveTest do
       assert has_element?(view, "#metrics button", "New metric")
     end
 
+    test "adds at an explicit canvas position and selects the new metric for editing", %{
+      conn: conn,
+      model: model
+    } do
+      {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
+
+      assert has_element?(
+               view,
+               "#model-canvas[data-editable=true][data-card-width='240'][data-card-height='120']"
+             )
+
+      render_click(view, "add-metric", %{"x" => 15, "y" => 14})
+
+      assert has_element?(
+               view,
+               "#metrics button[aria-pressed=true][data-grid-x='15'][data-grid-y='14']",
+               "New metric"
+             )
+
+      assert has_element?(view, "#metric_name[value='New metric']")
+      assert has_element?(view, "#save-status", "Unsaved changes")
+      view |> element("#save-model") |> render_click()
+
+      assert [%{"key" => "A"}, %{"key" => "B", "x" => 15, "y" => 14}] =
+               Repo.reload!(model).metrics
+
+      {:ok, reopened, _} = live(conn, ~p"/models/#{model.id}")
+      assert has_element?(reopened, "#metrics button[data-grid-x='15'][data-grid-y='14']")
+    end
+
+    test "undo removes a newly placed metric", %{conn: conn, model: model} do
+      {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
+      render_click(view, "add-metric", %{"x" => 15, "y" => 14})
+      assert has_element?(view, "#metrics button[data-grid-x='15'][data-grid-y='14']")
+      view |> element("#undo") |> render_click()
+      refute has_element?(view, "#metrics button[data-grid-x='15'][data-grid-y='14']")
+      view |> element("#save-model") |> render_click()
+      assert Repo.reload!(model).metrics == model.metrics
+    end
+
+    test "invalid, incomplete, or occupied creation positions do not change the model", %{
+      conn: conn,
+      model: model
+    } do
+      {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
+
+      for params <- [
+            %{"x" => 0, "y" => 0},
+            %{"x" => -1, "y" => 2},
+            %{"x" => Canvas.max_x() + 1, "y" => 2},
+            %{"x" => 2, "y" => Canvas.max_y() + 1},
+            %{"x" => "1.5", "y" => 2},
+            %{"x" => 2},
+            %{"y" => 2}
+          ] do
+        render_click(view, "add-metric", params)
+        assert has_element?(view, "#flash-error", "valid grid point")
+        assert has_element?(view, "#save-status", "All changes saved")
+        refute has_element?(view, "#metrics button", "New metric")
+      end
+
+      assert Repo.reload!(model).metrics == model.metrics
+    end
+
+    test "explicit placement still enforces the 100-metric limit", %{conn: conn, scope: scope} do
+      metrics =
+        for index <- 0..99 do
+          key = <<?A + div(index, 26)>> <> <<?A + rem(index, 26)>>
+          {x, y} = Canvas.default_position(rem(index, 3), div(index, 3))
+          Examples.metric(key, "Metric #{key}", "0", x, y)
+        end
+
+      model = model_fixture(scope, %{metrics: metrics})
+      {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
+      render_click(view, "add-metric", %{"x" => 150, "y" => 600})
+      assert has_element?(view, "#flash-error", "cannot add more")
+      assert has_element?(view, "#metrics > button:nth-child(100)")
+      refute has_element?(view, "#metrics > button:nth-child(101)")
+      assert Repo.reload!(model).metrics == metrics
+    end
+
     test "a card can sit halfway between rows, save, and reopen on the dot grid", %{
       conn: conn,
       scope: scope
@@ -167,7 +255,7 @@ defmodule MontyWeb.ModelLiveTest do
 
       render_click(view, "move-metric", %{"id" => c["id"], "x" => 14, "y" => 6})
       assert has_element?(view, "#metrics-#{c["id"]}[style*='top: 152px;']")
-      assert has_element?(view, "#model-canvas .dependency-path[d$='312 246']")
+      assert has_element?(view, "#model-canvas .dependency-path[d$='312 212']")
       view |> element("#save-model") |> render_click()
 
       moved = List.last(Repo.reload!(model).metrics)
