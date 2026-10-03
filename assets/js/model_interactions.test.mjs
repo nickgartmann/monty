@@ -20,6 +20,7 @@ function fixture(t) {
   }
   const win = {...events, setTimeout, clearTimeout, innerHeight: 600}
   const doc = {...events, defaultView: win}
+  doc.querySelector = () => null
   doc.createElement = () => ({
     style: {}, classList: {add() {}}, setAttribute() {}, append() {}, remove() {},
   })
@@ -120,4 +121,99 @@ test("new metric and server edit events focus/select the patched inline field wi
   f.fields.get("metric-id").value = "card-2"
   add.callback()
   assert.deepEqual(calls, [["focus", {preventScroll: true}], ["select"]])
+})
+
+test("floating controls and descendants do not add metrics on double-click or handle card keys", t => {
+  const f = fixture(t)
+  const panel = {closest: selector => selector === "[data-canvas-controls]" ? panel : null}
+  const child = {
+    closest: selector => selector === "[data-canvas-controls]" ? panel
+      : selector.includes("[data-metric-id]") ? f.card : null,
+  }
+  for (const insideViewport of [true, false]) {
+    f.pane.contains = () => insideViewport
+    for (const target of [panel, child]) {
+      const event = {
+        target, clientX: 240, clientY: 180,
+        preventDefault() { this.defaultPrevented = true },
+      }
+      f.hook.dblclick(event)
+      assert.equal(event.defaultPrevented, undefined)
+      for (const key of ["ArrowDown", "Enter", " "]) {
+        assert.equal(f.key(target, key).defaultPrevented, undefined)
+      }
+      assert.equal(f.pushed.length, 0)
+    }
+  }
+})
+
+test("Cmd+Z and Ctrl+Z click the enabled Undo button from the canvas or toolbar", t => {
+  const f = fixture(t)
+  let clicks = 0
+  f.fields.set("undo", {disabled: false, click() { clicks++ }})
+  const background = {closest: () => null}
+  const toolbar = {closest: selector => selector === "[data-canvas-controls]" ? toolbar : null}
+
+  for (const target of [background, f.card, toolbar]) {
+    for (const modifiers of [{metaKey: true}, {ctrlKey: true}]) {
+      const before = clicks
+      assert.equal(f.key(target, "z", modifiers).defaultPrevented, true)
+      assert.equal(clicks, before + 1)
+    }
+  }
+  assert.equal(f.key(background, "Z", {metaKey: true}).defaultPrevented, true)
+  assert.equal(clicks, 7)
+  assert.deepEqual(f.pushed, [])
+})
+
+test("model undo leaves native editing, redo, and already handled keys alone", t => {
+  const f = fixture(t)
+  let clicks = 0
+  f.fields.set("undo", {disabled: false, click() { clicks++ }})
+  for (const target of [
+    f.nested("input"), f.nested("textarea"), f.nested("select"),
+    {isContentEditable: true, closest: () => null},
+  ]) {
+    for (const modifiers of [{metaKey: true}, {ctrlKey: true}]) {
+      assert.equal(f.key(target, "z", modifiers).defaultPrevented, undefined)
+    }
+  }
+  for (const modifiers of [
+    {}, {metaKey: true, shiftKey: true}, {ctrlKey: true, altKey: true},
+    {metaKey: true, isComposing: true}, {ctrlKey: true, repeat: true},
+  ]) {
+    assert.equal(f.key(f.card, "z", modifiers).defaultPrevented, undefined)
+  }
+  f.key(f.card, "z", {ctrlKey: true, defaultPrevented: true})
+  assert.equal(clicks, 0)
+})
+
+test("undo shortcuts do nothing with no history, read-only models, modals, or active gestures", t => {
+  const f = fixture(t)
+  let clicks = 0
+  const undo = {disabled: true, click() { clicks++ }}
+  f.fields.set("undo", undo)
+  assert.equal(f.key(f.card, "z", {ctrlKey: true}).defaultPrevented, undefined)
+  undo.disabled = false
+
+  f.canvas.dataset.editable = "false"
+  assert.equal(f.key(f.card, "z", {metaKey: true}).defaultPrevented, undefined)
+  f.canvas.dataset.editable = "true"
+  f.doc.querySelector = () => ({})
+  assert.equal(f.key(f.card, "z", {ctrlKey: true}).defaultPrevented, undefined)
+  f.doc.querySelector = () => null
+  f.hook.canvasConnection = "disconnected"
+  assert.equal(f.key(f.card, "z", {metaKey: true}).defaultPrevented, undefined)
+  f.hook.canvasConnection = "connected"
+
+  const drag = f.hook.canvasDrag, pan = f.hook.canvasPan
+  f.hook.canvasDrag = {busy: true}
+  assert.equal(f.key(f.card, "z", {ctrlKey: true}).defaultPrevented, undefined)
+  f.hook.canvasDrag = drag
+  f.hook.canvasPan = {busy: true}
+  assert.equal(f.key(f.card, "z", {metaKey: true}).defaultPrevented, undefined)
+  f.hook.canvasPan = pan
+  f.fields.delete("undo")
+  assert.equal(f.key(f.card, "z", {metaKey: true}).defaultPrevented, undefined)
+  assert.equal(clicks, 0)
 })

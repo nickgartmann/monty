@@ -44,6 +44,11 @@ reauthentication use the generated Phoenix code.
 
 ## Modeling
 
+- Model details and controls live in a stationary card at the canvas's upper-right.
+  Use its chevron to collapse it to the model title or expand it again. The card
+  stays in place while panning; settings scroll inside it.
+- Add, Undo, and Guide are icon buttons beside the card and stay available when it is
+  collapsed. Guide opens a separate modal without changing the card's state.
 - Add, rename, drag, or keyboard-position metric cards.
 - Click a card's name or formula to edit it in place; results update as you type.
 - For valid ranges, choose normal, lognormal, or uniform from the compact
@@ -52,7 +57,8 @@ reauthentication use the generated Phoenix code.
   click it to edit the note in a modal.
 - Preview correlated Monte Carlo histograms, means, and 5th/95th percentiles.
 - Save models, undo the last 20 metric edits in the current session, and
-  reopen saved assumptions.
+  reopen saved assumptions. Cmd+Z or Ctrl+Z triggers model undo when not editing
+  a text field or using a modal.
 - Duplicate readable models into your own private workspace.
 - Export and import versioned Monty JSON (up to 2.5 MB / 100 metrics).
 - Explore public models with SQLite full-text prefix search over titles

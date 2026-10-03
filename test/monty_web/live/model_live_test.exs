@@ -28,6 +28,81 @@ defmodule MontyWeb.ModelLiveTest do
     assert has_element?(view, "#formula-guide")
   end
 
+  test "floating model controls collapse to the title and restore their content", %{conn: conn} do
+    {:ok, view, _} = live(conn, ~p"/try")
+    assert has_element?(view, ".model-workspace > #model-controls[data-canvas-controls]")
+    refute has_element?(view, "#canvas-viewport #model-controls")
+    assert has_element?(view, "#model-controls #model-title")
+    assert has_element?(view, "#model-controls #model-description")
+    assert has_element?(view, "#model-controls #export-model")
+    assert has_element?(view, "#model-controls #duplicate-model")
+    assert has_element?(view, "#model-controls #model-toolbar #add-metric")
+    assert has_element?(view, "#model-controls #model-toolbar #undo")
+    refute has_element?(view, "#model-controls-body #model-toolbar")
+    refute has_element?(view, "#resample")
+    refute has_element?(view, "#model-controls a")
+
+    assert has_element?(
+             view,
+             "#model-toolbar #formula-help.canvas-tool-button[aria-label='Guide']"
+           )
+
+    view |> element("#toggle-model-controls[aria-expanded=true]") |> render_click()
+    assert has_element?(view, "#toggle-model-controls[aria-expanded=false]")
+    assert has_element?(view, "#model-controls-body[hidden]")
+    assert has_element?(view, "#model-controls > div #model-title")
+    assert has_element?(view, "#model-canvas #metrics")
+
+    # Canvas edits do not expand the panel.
+    view |> form("#metric-form", metric: %{name: "Savings"}) |> render_change()
+    assert has_element?(view, "#model-controls-body[hidden]")
+    view |> element("#toggle-model-controls") |> render_click()
+    assert has_element?(view, "#toggle-model-controls[aria-expanded=true]")
+    refute has_element?(view, "#model-controls-body[hidden]")
+    assert has_element?(view, "#metric_name[value='Savings']")
+  end
+
+  test "external metric tools work while the model card is collapsed", %{conn: conn} do
+    {:ok, view, _} = live(conn, ~p"/try")
+    view |> element("#toggle-model-controls") |> render_click()
+    assert has_element?(view, "#model-toolbar #add-metric[aria-label='Add metric']")
+    assert has_element?(view, "#model-toolbar #undo[disabled]")
+
+    view |> element("#add-metric") |> render_click()
+    assert has_element?(view, "#metric_name[value='New metric']")
+    assert has_element?(view, "#model-controls-body[hidden]")
+    refute has_element?(view, "#undo[disabled]")
+    view |> element("#undo") |> render_click()
+    refute has_element?(view, "#metric_name[value='New metric']")
+    assert has_element?(view, "#model-controls-body[hidden]")
+    assert has_element?(view, "#undo[disabled]")
+  end
+
+  test "Guide opens a modal without expanding a collapsed metadata card", %{conn: conn} do
+    {:ok, view, _} = live(conn, ~p"/try")
+    view |> element("#toggle-model-controls") |> render_click()
+    view |> element("#model-toolbar #formula-help[aria-expanded=false]") |> render_click()
+    assert has_element?(view, "#model-controls-body[hidden]")
+    assert has_element?(view, "#formula-guide #guide-dialog[role=dialog][aria-modal=true]")
+    refute has_element?(view, "#model-controls #formula-guide")
+    assert has_element?(view, "#formula-help[aria-expanded=true]")
+
+    view |> element("#close-guide") |> render_click()
+    refute has_element?(view, "#formula-guide")
+    assert has_element?(view, "#model-controls-body[hidden]")
+    assert has_element?(view, "#formula-help[aria-expanded=false]")
+
+    view |> element("#toggle-model-controls") |> render_click()
+    view |> element("#formula-help[aria-haspopup=dialog]") |> render_click()
+    refute has_element?(view, "#model-controls-body[hidden]")
+    assert has_element?(view, "#formula-guide")
+
+    view |> element("#formula-guide") |> render_keydown(%{"key" => "Escape"})
+    refute has_element?(view, "#formula-guide")
+    refute has_element?(view, "#model-controls-body[hidden]")
+    assert has_element?(view, "#formula-help[aria-expanded=false]")
+  end
+
   test "invalid formulas are visible and do not kill the editor", %{conn: conn} do
     {:ok, view, _} = live(conn, ~p"/try")
     view |> form("#metric-form", metric: %{input: "=UNKNOWN + 1"}) |> render_change()
@@ -43,7 +118,13 @@ defmodule MontyWeb.ModelLiveTest do
     {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
     assert has_element?(view, "#model-page")
     refute has_element?(view, "#add-metric")
+    refute has_element?(view, "#undo")
+    assert has_element?(view, "#model-toolbar #formula-help")
+    view |> element("#formula-help") |> render_click()
+    assert has_element?(view, "#guide-dialog[role=dialog]")
+    view |> element("#close-guide") |> render_click()
     refute has_element?(view, "#save-model")
+    refute has_element?(view, "#metrics .metric-delete-button")
     assert has_element?(view, "#metric_name[readonly]")
     assert has_element?(view, "#metrics > [draggable=false]")
     assert has_element?(view, "#metrics > [data-movable=false]")
@@ -73,6 +154,23 @@ defmodule MontyWeb.ModelLiveTest do
     setup %{user: user} do
       scope = Scope.for_user(user)
       %{scope: scope, model: model_fixture(scope)}
+    end
+
+    test "collapsing the controls preserves the settings form", %{conn: conn, model: model} do
+      {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
+      view |> element("#model-controls #model-settings") |> render_click()
+      assert has_element?(view, "#model-controls #model-settings-form")
+      view |> element("#toggle-model-controls") |> render_click()
+      assert has_element?(view, "#model-controls-body[hidden]")
+      view |> element("#toggle-model-controls") |> render_click()
+      assert has_element?(view, "#model-controls #model-settings-form")
+
+      view
+      |> form("#model-settings-form", model: %{title: "Updated model title"})
+      |> render_submit()
+
+      assert has_element?(view, "#model-controls #model-title", "Updated model title")
+      assert Repo.reload!(model).title == "Updated model title"
     end
 
     test "previews, saves, and reopens edits with immutable references", %{
@@ -141,10 +239,37 @@ defmodule MontyWeb.ModelLiveTest do
       render_click(view, "move-metric", %{"id" => new_id, "x" => 14, "y" => 1})
       view |> element("#save-model") |> render_click()
       assert [%{"key" => "A"}, %{"key" => "B", "x" => 14, "y" => 1}] = Repo.reload!(model).metrics
-      render_click(view, "delete-metric", %{"id" => new_id})
+      assert has_element?(view, "#delete-metric-#{new_id}[data-confirm][type=button]")
+      view |> element("#delete-metric-#{new_id}") |> render_click()
       refute has_element?(view, "#metric_name[value='New metric']")
       view |> element("#undo") |> render_click()
       assert has_element?(view, "#metric-name-#{new_id}", "New metric")
+    end
+
+    test "unselected cards have a confirmed delete button and deletion can be undone", %{
+      conn: conn,
+      scope: scope
+    } do
+      a = metric_fixture(%{"name" => "Revenue"})
+      b = metric_fixture(%{"name" => "Costs", "key" => "B", "x" => 14})
+      model = model_fixture(scope, %{metrics: [a, b]})
+      {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
+
+      assert has_element?(view, "#metrics-#{b["id"]}[data-selected=false]")
+
+      assert has_element?(
+               view,
+               "#delete-metric-#{b["id"]}[aria-label='Delete Costs'][data-confirm*='Costs'][data-confirm*='(B)'] .hero-trash"
+             )
+
+      view |> element("#delete-metric-#{b["id"]}") |> render_click()
+      refute has_element?(view, "#metrics-#{b["id"]}")
+      assert has_element?(view, "#metrics-#{a["id"]}")
+      view |> element("#save-model") |> render_click()
+      assert Repo.reload!(model).metrics == [a]
+
+      view |> element("#undo") |> render_click()
+      assert has_element?(view, "#metrics-#{b["id"]}")
     end
 
     test "adds at an explicit canvas position and selects the new metric for editing", %{

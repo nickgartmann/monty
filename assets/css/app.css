@@ -64,9 +64,32 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .form-input::placeholder { color: #9aaba6; }
 .form-input-error { border-color: #fda4af; }
 .phx-submit-loading .button-primary { opacity: .65; pointer-events: none; }
-.model-workspace { display: grid; grid-template-columns: minmax(0,1fr); min-height: calc(100vh - 212px); }
+.model-workspace { position: relative; display: grid; grid-template-columns: minmax(0,1fr); }
+.model-controls {
+  position: absolute; top: 20px; right: 20px; z-index: 40;
+  display: flex; flex-direction: column; width: min(360px, calc(100% - 40px)); max-height: calc(100% - 40px);
+  border: 1px solid #dce6df; border-radius: 14px; background: #fff;
+  box-shadow: 0 12px 32px #123a2012, 0 2px 6px #123a2008;
+}
+.model-controls-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; border-radius: 0 0 14px 14px; }
+.model-controls .button-primary, .model-controls .button-secondary, .model-controls .button-ghost {
+  font-size: 12px; padding: 8px 10px;
+}
+.canvas-toolbar {
+  position: absolute; top: 10px; right: calc(100% + 12px); display: flex; gap: 8px;
+}
+.canvas-tool-button {
+  display: flex; align-items: center; justify-content: center; width: 40px; height: 40px;
+  flex-shrink: 0; border: 1px solid #dce6df; border-radius: 10px; background: #fff; color: #0f766e;
+  box-shadow: 0 3px 10px #123a2010; transition: background .15s, border-color .15s, box-shadow .15s;
+}
+.canvas-tool-button:not(:disabled):hover { background: #f0fdfa; border-color: #9ebfb0; box-shadow: 0 4px 12px #123a2018; }
+@media (max-width: 639px) {
+  .model-controls { top: 12px; right: 12px; width: min(320px, calc(100% - 80px)); max-height: calc(100% - 24px); }
+  .canvas-toolbar { flex-direction: column; right: calc(100% + 8px); }
+}
 .canvas-scroll {
-  position: relative; overflow: clip; min-height: 560px; background-color: #f5f8f5;
+  position: relative; overflow: clip; height: calc(100dvh - 76px); min-height: 480px; background-color: #f5f8f5;
   cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
   background-image: radial-gradient(#cddbd3 1px, transparent 1px);
   background-size: var(--canvas-grid-step, 20px) var(--canvas-grid-step, 20px);
@@ -141,6 +164,16 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   display: flex; align-items: center; justify-content: center; width: 18px; height: 18px;
   color: #78908b; border-radius: 4px; opacity: 0; transition: opacity .15s, background .15s, color .15s;
 }
+.metric-delete-button {
+  position: absolute; top: 30px; right: 8px; display: flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 5px; color: #dc2626; cursor: pointer;
+  opacity: 0; pointer-events: none; transition: opacity .15s, background .15s, color .15s;
+}
+.metric-card:hover .metric-delete-button, .metric-card:focus-within .metric-delete-button {
+  opacity: 1; pointer-events: auto;
+}
+.metric-delete-button:hover { background: #fef2f2; color: #b91c1c; }
+.metric-delete-button:focus-visible { outline: 2px solid #dc2626; outline-offset: 2px; background: #fef2f2; }
 .metric-card:hover .metric-note-button, .metric-card:focus-within .metric-note-button { opacity: 1; }
 .metric-note-button:hover, .metric-note-button:focus-visible { background: #f0fdfa; color: #0f766e; }
 .metric-note-tooltip {
@@ -161,7 +194,6 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .nav-link { padding: 7px; font-size: 12px; }
   .button-primary, .button-secondary, .button-ghost { padding: 8px 10px; font-size: 12px; }
   .page-shell { padding-inline: 18px; }
-  .model-workspace { display: flex; flex-direction: column; }
-  .canvas-scroll { max-height: 65vh; min-height: 420px; }
+  .canvas-scroll { height: calc(100dvh - 66px); min-height: 360px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }

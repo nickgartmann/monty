@@ -6,6 +6,10 @@ import {primaryButtonReleased} from "./canvas_pointer.mjs"
 const PAN_THRESHOLD = 5
 const PAN_PROPERTIES = ["--canvas-pan-x", "--canvas-pan-y", "--canvas-origin-x", "--canvas-origin-y"]
 
+export function isCanvasControl(target) {
+  return target?.closest?.("[data-canvas-controls]") != null
+}
+
 // LiveView owns the world; the local viewport is presentation, not model data.
 export function preservePanStyles(from, to) {
   if (from.hasAttribute?.("data-model-canvas")) {
@@ -96,7 +100,7 @@ export class CanvasPan {
   pointerDown(event) {
     this.clearClickSuppression()
     const pane = this.pane
-    if (!pane?.contains(event.target)) return
+    if (isCanvasControl(event.target) || !pane?.contains(event.target)) return
     // Every card, including read-only cards, keeps its own click interaction.
     if (event.target.closest("[data-metric-id], a, button, form, input, textarea, select, label, [contenteditable]")) {
       canvasDebug.record("pan.start_ignored", {reason: "interactive_target"})
@@ -202,6 +206,7 @@ export class CanvasPan {
   }
 
   keyDown(event) {
+    if (isCanvasControl(event.target)) return
     if (event.key === "Escape" && this.active) {
       event.preventDefault()
       this.cancel("escape")
@@ -220,6 +225,7 @@ export class CanvasPan {
   }
 
   focusIn(event) {
+    if (isCanvasControl(event.target)) return
     const card = event.target.closest?.("[data-metric-id]")
     if (!card || this.busy || this.isBusy() || !this.getCanvas()?.contains(card)) return
     // Keyboard focus reveals a card using the same camera as pointer panning,
@@ -242,7 +248,8 @@ export class CanvasPan {
   }
 
   wheel(event) {
-    if (this.busy || this.isBusy() || event.ctrlKey || event.metaKey || !this.pane?.contains(event.target)) return
+    if (isCanvasControl(event.target) || this.busy || this.isBusy() ||
+        event.ctrlKey || event.metaKey || !this.pane?.contains(event.target)) return
     event.preventDefault()
     const scale = event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? this.pane.clientHeight : 1
     const dx = event.shiftKey && !event.deltaX ? event.deltaY : event.deltaX
@@ -260,7 +267,8 @@ export class CanvasPan {
   }
 
   click(event) {
-    if (!this.pane?.contains(event.target) && event.target !== this.host) return
+    if (isCanvasControl(event.target) ||
+        (!this.pane?.contains(event.target) && event.target !== this.host)) return
     canvasDebug.record("pan.click_suppressed")
     event.preventDefault()
     event.stopImmediatePropagation()

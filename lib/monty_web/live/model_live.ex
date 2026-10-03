@@ -15,6 +15,7 @@ defmodule MontyWeb.ModelLive do
         dirty?: false,
         show_settings?: false,
         show_help?: false,
+        controls_collapsed?: false,
         note_metric: nil,
         note_form: nil,
         history: [],
@@ -240,6 +241,12 @@ defmodule MontyWeb.ModelLive do
 
   def handle_event("toggle-help", _, socket),
     do: {:noreply, assign(socket, :show_help?, !socket.assigns.show_help?)}
+
+  def handle_event("close-help", _, socket),
+    do: {:noreply, assign(socket, :show_help?, false)}
+
+  def handle_event("toggle-controls", _, socket),
+    do: {:noreply, assign(socket, :controls_collapsed?, !socket.assigns.controls_collapsed?)}
 
   def handle_event("save-settings", %{"model" => params}, socket) do
     if socket.assigns.editable? do
@@ -766,188 +773,198 @@ defmodule MontyWeb.ModelLive do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} wide active={:library}>
       <div id="model-page">
-        <div class="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200/70 bg-white px-6 py-5 sm:px-8">
-          <div class="min-w-0">
-            <div class="mb-2 flex items-center gap-2 text-xs text-slate-400">
-              <.link navigate={~p"/explore"} class="hover:text-teal-700">Models</.link>
-              <.icon name="hero-chevron-right-mini" class="size-3" />
-              <span :if={@demo?} class="text-teal-600">Interactive sandbox</span>
-              <span :if={!@demo?} class="capitalize">{@model.visibility} model</span>
-            </div>
-            <h1 id="model-title" class="text-xl font-semibold tracking-tight text-slate-800">
-              {@model.title}
-            </h1>
-            <p class="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500">{@model.description}</p>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <span
-              id="save-status"
-              class="mr-2 flex items-center gap-1.5 text-xs text-slate-400"
-              role="status"
-            >
-              <span class={[
-                "size-1.5 rounded-full",
-                if(@dirty?, do: "bg-amber-400", else: "bg-teal-500")
-              ]}></span>
-              <%= cond do %>
-                <% @demo? -> %>
-                  Not saved · sandbox
-                <% @dirty? -> %>
-                  Unsaved changes
-                <% true -> %>
-                  All changes saved
-              <% end %>
-            </span>
-            <button
-              id="export-model"
-              phx-click="export"
-              class="button-secondary"
-              aria-label="Export model as JSON"
-            >
-              <.icon name="hero-arrow-down-tray" class="size-4" /><span class="hidden sm:block">Export</span>
-            </button>
-            <button
-              :if={@editable? && !@demo?}
-              id="model-settings"
-              phx-click="toggle-settings"
-              class="button-secondary"
-            >
-              <.icon name="hero-adjustments-horizontal" class="size-4" /><span class="hidden sm:block">Settings</span>
-            </button>
-            <button
-              :if={@editable? && !@demo?}
-              id="save-model"
-              phx-click="save"
-              class="button-primary"
-              phx-disable-with="Saving…"
-              disabled={@metric_form && !@metric_form.source.valid?}
-            >
-              <.icon name="hero-check" class="size-4" />Save model
-            </button>
-            <button
-              id="duplicate-model"
-              phx-click="duplicate"
-              class={if(@editable? && !@demo?, do: "button-secondary", else: "button-primary")}
-            >
-              <.icon name="hero-document-duplicate" class="size-4" />{if(@editable? && !@demo?,
-                do: "Duplicate saved model",
-                else: "Save a copy"
-              )}
-            </button>
-          </div>
-        </div>
-
-        <div
-          :if={@show_settings? && @editable?}
-          id="model-settings-panel"
-          class="border-b border-teal-100 bg-teal-50/40 px-6 py-6"
-        >
-          <.form
-            for={@model_form}
-            id="model-settings-form"
-            phx-submit="save-settings"
-            class="mx-auto max-w-3xl"
-          >
-            <div class="grid gap-x-6 sm:grid-cols-2">
-              <.input field={@model_form[:title]} label="Model title" maxlength="120" required />
-              <.input
-                field={@model_form[:visibility]}
-                type="select"
-                label="Who can see this?"
-                options={[
-                  {"Private · only you", :private},
-                  {"Unlisted · anyone with the link", :unlisted},
-                  {"Public · listed in Explore", :public}
-                ]}
-              />
-            </div>
-            <.input
-              field={@model_form[:description]}
-              type="textarea"
-              label="Description"
-              rows="2"
-              maxlength="2000"
-            />
-            <p class="mb-4 text-xs text-slate-500">
-              Unlisted links are not secret tokens. Anyone with the URL can read the model; use Private for sensitive information.
-            </p>
-            <div class="flex items-center gap-3">
-              <button id="save-settings" class="button-primary" type="submit">Save settings</button>
-              <button type="button" class="button-ghost" phx-click="toggle-settings">Cancel</button>
-              <.link
-                :if={@model.visibility != :private && @model.id}
-                href={~p"/models/#{@model.id}"}
-                class="ml-auto text-xs text-teal-700"
-              >Share this URL</.link>
-            </div>
-          </.form>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2 border-b border-slate-200/70 bg-white px-6 py-2.5 sm:px-8">
-          <button :if={@editable?} id="add-metric" phx-click="add-metric" class="button-secondary">
-            <.icon name="hero-plus" class="size-4" />Add metric
-          </button>
-          <button
-            :if={@editable?}
-            id="undo"
-            phx-click="undo"
-            class="button-ghost"
-            disabled={@history == []}
-            aria-label="Undo last metric change"
-          >
-            <.icon name="hero-arrow-uturn-left" class="size-4" />
-          </button>
-          <span class="ml-2 hidden text-xs text-slate-400 sm:block">{length(@model.metrics)} metrics · {@samples} correlated draws</span>
-          <span class="hidden text-xs text-slate-400 lg:block">
-            Drag background to pan<span :if={@editable?}> · Double-click to add</span>
-          </span>
-          <div class="ml-auto flex items-center gap-2">
-            <button id="resample" phx-click="resample" class="button-ghost"><.icon
-              name="hero-arrow-path"
-              class="size-4"
-            />Recalculate</button>
-            <button
-              id="formula-help"
-              phx-click="toggle-help"
-              class="button-ghost"
-              aria-expanded={to_string(@show_help?)}
-            ><.icon name="hero-question-mark-circle" class="size-4" />Guide</button>
-          </div>
-        </div>
-        <div
-          :if={@show_help?}
-          id="formula-guide"
-          class="border-b border-teal-100 bg-teal-50 px-8 py-5 text-sm leading-7 text-teal-900"
-        >
-          <strong>A spreadsheet for things you don't know.</strong>
-          Enter a number (<code>42</code>), a range (<code>10 to 20</code>), or a formula (<code>=A * B</code>).
-          Normal and lognormal ranges describe a 90% interval; uniform ranges are hard bounds.
-          <span id="distribution-guide" class="block">
-            For explicit distributions, use <code>=normal(100, 15)</code>
-            (mean, standard deviation), <code>=lognormal(0, 1)</code>
-            (mean and standard deviation in log space), or <code>=uniform(10, 20)</code>
-            (hard bounds). Parameters can reference cards, like <code>=normal(A, B)</code>.
-            The range selector applies only to <code>lower to upper</code>
-            inputs.
-          </span>
-          <span id="pert-guide" class="block">
-            For a bounded estimate with a most likely value, use <code>=pert(10, 15, 30)</code>
-            (minimum, mode, maximum). PERT uses a smooth beta distribution with weighting 4;
-            the minimum must be less than the maximum, and the mode must lie between them.
-            Metric references work too: <code>=pert(A, B, C)</code>.
-          </span>
-          References use the permanent letter on each card. Arithmetic, parentheses, <code>min</code>, <code>max</code>, <code>abs</code>, <code>sqrt</code>, <code>log</code>, <code>exp</code>, <code>sum</code>, and
-          <code>mean</code>
-          are supported, along with <code>sin</code>, <code>cos</code>, <code>tan</code>, <code>floor</code>, <code>ceil</code>, and <code>round</code>.
-          Changes preview immediately; save to keep them. Move cards directly and use the shadow
-          to preview where they will snap to the background dots
-          ({Canvas.grid_step()}px). Use arrow keys on a focused card to move one dot;
-          Shift + arrow moves five dots. Drag the background or scroll to pan in any direction.
-          Press Escape to cancel a drag.
-          <span class="block text-xs text-teal-700">Simulation estimates are approximate, not guarantees. Normal draws may fall outside the entered interval. Preview uses a fixed seed so edits are comparable.</span>
-        </div>
-
         <div class="model-workspace">
+          <aside
+            id="model-controls"
+            class="model-controls"
+            data-canvas-controls
+            aria-labelledby="model-title"
+          >
+            <div
+              id="model-toolbar"
+              class="canvas-toolbar"
+              role="toolbar"
+              aria-label="Canvas controls"
+            >
+              <button
+                :if={@editable?}
+                id="add-metric"
+                type="button"
+                phx-click="add-metric"
+                class="canvas-tool-button"
+                aria-label="Add metric"
+                title="Add metric"
+              >
+                <.icon name="hero-plus" class="size-5" />
+              </button>
+              <button
+                :if={@editable?}
+                id="undo"
+                type="button"
+                phx-click="undo"
+                class="canvas-tool-button"
+                disabled={@history == []}
+                aria-label="Undo last metric change"
+                aria-keyshortcuts="Meta+Z Control+Z"
+                title="Undo last metric change (⌘Z / Ctrl+Z)"
+              >
+                <.icon name="hero-arrow-uturn-left" class="size-5" />
+              </button>
+              <button
+                id="formula-help"
+                type="button"
+                phx-click="toggle-help"
+                class="canvas-tool-button"
+                aria-label="Guide"
+                title="Guide"
+                aria-haspopup="dialog"
+                aria-expanded={to_string(@show_help?)}
+                aria-controls="guide-dialog"
+              >
+                <.icon name="hero-question-mark-circle" class="size-5" />
+              </button>
+            </div>
+            <div class="flex shrink-0 items-start gap-3 p-4">
+              <h1
+                id="model-title"
+                class="min-w-0 flex-1 break-words text-base font-semibold leading-6 tracking-tight text-slate-800"
+              >
+                {@model.title}
+              </h1>
+              <button
+                id="toggle-model-controls"
+                type="button"
+                phx-click="toggle-controls"
+                class="button-ghost shrink-0 !p-1"
+                aria-expanded={to_string(!@controls_collapsed?)}
+                aria-controls="model-controls-body"
+                aria-label={
+                  if(@controls_collapsed?,
+                    do: "Expand model controls",
+                    else: "Collapse model controls"
+                  )
+                }
+                title={if(@controls_collapsed?, do: "Expand", else: "Collapse")}
+              >
+                <.icon
+                  name={if(@controls_collapsed?, do: "hero-chevron-down", else: "hero-chevron-up")}
+                  class="size-4"
+                />
+              </button>
+            </div>
+            <div id="model-controls-body" class="model-controls-body" hidden={@controls_collapsed?}>
+              <div class="space-y-4 border-t border-slate-100 p-4">
+                <div class="min-w-0">
+                  <p id="model-description" class="text-xs leading-relaxed text-slate-500">
+                    {@model.description}
+                  </p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <span
+                    id="save-status"
+                    class="mb-1 flex w-full items-center gap-1.5 text-xs text-slate-400"
+                    role="status"
+                  >
+                    <span class={[
+                      "size-1.5 rounded-full",
+                      if(@dirty?, do: "bg-amber-400", else: "bg-teal-500")
+                    ]}></span>
+                    <%= cond do %>
+                      <% @demo? -> %>
+                        Not saved · sandbox
+                      <% @dirty? -> %>
+                        Unsaved changes
+                      <% true -> %>
+                        All changes saved
+                    <% end %>
+                  </span>
+                  <button
+                    id="export-model"
+                    phx-click="export"
+                    class="button-secondary"
+                    aria-label="Export model as JSON"
+                  >
+                    <.icon name="hero-arrow-down-tray" class="size-4" /><span>Export</span>
+                  </button>
+                  <button
+                    :if={@editable? && !@demo?}
+                    id="model-settings"
+                    phx-click="toggle-settings"
+                    class="button-secondary"
+                  >
+                    <.icon name="hero-adjustments-horizontal" class="size-4" /><span>Settings</span>
+                  </button>
+                  <button
+                    :if={@editable? && !@demo?}
+                    id="save-model"
+                    phx-click="save"
+                    class="button-primary"
+                    phx-disable-with="Saving…"
+                    disabled={@metric_form && !@metric_form.source.valid?}
+                  >
+                    <.icon name="hero-check" class="size-4" />Save model
+                  </button>
+                  <button
+                    id="duplicate-model"
+                    phx-click="duplicate"
+                    class={if(@editable? && !@demo?, do: "button-secondary", else: "button-primary")}
+                  >
+                    <.icon name="hero-document-duplicate" class="size-4" />{if(@editable? && !@demo?,
+                      do: "Duplicate saved model",
+                      else: "Save a copy"
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <div
+                :if={@show_settings? && @editable?}
+                id="model-settings-panel"
+                class="border-t border-teal-100 bg-teal-50/40 p-4"
+              >
+                <.form
+                  for={@model_form}
+                  id="model-settings-form"
+                  phx-submit="save-settings"
+                  class="min-w-0"
+                >
+                  <div class="grid gap-2">
+                    <.input field={@model_form[:title]} label="Model title" maxlength="120" required />
+                    <.input
+                      field={@model_form[:visibility]}
+                      type="select"
+                      label="Who can see this?"
+                      options={[
+                        {"Private · only you", :private},
+                        {"Unlisted · anyone with the link", :unlisted},
+                        {"Public · listed in Explore", :public}
+                      ]}
+                    />
+                  </div>
+                  <.input
+                    field={@model_form[:description]}
+                    type="textarea"
+                    label="Description"
+                    rows="2"
+                    maxlength="2000"
+                  />
+                  <p class="mb-4 text-xs text-slate-500">
+                    Unlisted links are not secret tokens. Anyone with the URL can read the model; use Private for sensitive information.
+                  </p>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <button id="save-settings" class="button-primary" type="submit">Save settings</button>
+                    <button type="button" class="button-ghost" phx-click="toggle-settings">Cancel</button>
+                    <.link
+                      :if={@model.visibility != :private && @model.id}
+                      href={~p"/models/#{@model.id}"}
+                      class="ml-auto text-xs text-teal-700"
+                    >Share this URL</.link>
+                  </div>
+                </.form>
+              </div>
+            </div>
+          </aside>
+
           <section
             id="canvas-viewport"
             class="canvas-scroll"
@@ -1030,6 +1047,20 @@ defmodule MontyWeb.ModelLive do
                   <% else %>
                     <.metric_face card={card} editable?={@editable?} />
                   <% end %>
+                  <button
+                    :if={@editable?}
+                    id={"delete-metric-#{card.id}"}
+                    type="button"
+                    phx-click="delete-metric"
+                    phx-value-id={card.id}
+                    data-card-controls
+                    data-confirm={"Delete \"#{card.metric["name"]}\" (#{card.metric["key"]})? Formulas that reference this metric may stop working."}
+                    class="metric-delete-button"
+                    aria-label={"Delete #{card.metric["name"]}"}
+                    title="Delete metric"
+                  >
+                    <.icon name="hero-trash" class="size-3.5" />
+                  </button>
                 </div>
               </div>
               <div
@@ -1045,6 +1076,80 @@ defmodule MontyWeb.ModelLive do
               </div>
             </div>
           </section>
+        </div>
+        <div
+          :if={@show_help?}
+          id="formula-guide"
+          data-canvas-controls
+          class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4 backdrop-blur-sm"
+          phx-window-keydown="close-help"
+          phx-key="Escape"
+          phx-mounted={JS.push_focus(to: "#formula-help") |> JS.focus(to: "#close-guide")}
+          phx-remove={JS.pop_focus()}
+        >
+          <.focus_wrap
+            id="guide-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="guide-title"
+            phx-click-away="close-help"
+            class="flex max-h-[90dvh] w-full max-w-2xl flex-col rounded-2xl border border-slate-200 bg-white shadow-xl"
+          >
+            <div class="flex shrink-0 items-start justify-between gap-4 border-b border-slate-100 p-5 sm:p-6">
+              <div>
+                <p class="eyebrow mb-2">Modeling guide</p>
+                <h2 id="guide-title" class="text-lg font-semibold text-slate-800">
+                  A spreadsheet for things you don't know.
+                </h2>
+              </div>
+              <button
+                id="close-guide"
+                type="button"
+                phx-click="close-help"
+                class="button-ghost shrink-0 !p-2"
+                aria-label="Close guide"
+              >
+                <.icon name="hero-x-mark" class="size-5" />
+              </button>
+            </div>
+            <div class="min-h-0 space-y-4 overflow-y-auto overscroll-contain p-5 text-sm leading-6 text-slate-600 sm:p-6">
+              <p>
+                Enter a number (<code>42</code>), a range (<code>10 to 20</code>), or a formula (<code>=A * B</code>).
+                Normal and lognormal ranges describe a 90% interval; uniform ranges are hard bounds.
+              </p>
+              <p id="distribution-guide">
+                For explicit distributions, use <code>=normal(100, 15)</code>
+                (mean, standard deviation), <code>=lognormal(0, 1)</code>
+                (mean and standard deviation in log space), or <code>=uniform(10, 20)</code>
+                (hard bounds). Parameters can reference cards, like <code>=normal(A, B)</code>.
+                The range selector applies only to <code>lower to upper</code>
+                inputs.
+              </p>
+              <p id="pert-guide">
+                For a bounded estimate with a most likely value, use <code>=pert(10, 15, 30)</code>
+                (minimum, mode, maximum). PERT uses a smooth beta distribution with weighting 4;
+                the minimum must be less than the maximum, and the mode must lie between them.
+                Metric references work too: <code>=pert(A, B, C)</code>.
+              </p>
+              <p>
+                References use the permanent letter on each card. Arithmetic, parentheses, <code>min</code>, <code>max</code>, <code>abs</code>, <code>sqrt</code>, <code>log</code>, <code>exp</code>, <code>sum</code>, and
+                <code>mean</code>
+                are supported, along with <code>sin</code>, <code>cos</code>, <code>tan</code>, <code>floor</code>, <code>ceil</code>, and <code>round</code>.
+              </p>
+              <p>
+                Changes preview immediately; save to keep them. Move cards directly and use the shadow
+                to preview where they will snap to the background dots
+                ({Canvas.grid_step()}px). Use arrow keys on a focused card to move one dot;
+                Shift + arrow moves five dots. Drag the background or scroll to pan in any direction.
+                Press Escape to cancel a drag. Use Cmd+Z or Ctrl+Z to undo a model change;
+                text fields keep their normal text undo.
+              </p>
+              <p class="rounded-lg bg-teal-50 p-3 text-xs leading-5 text-teal-800">
+                Simulation estimates are approximate, not guarantees. Normal draws may fall outside the entered interval.
+                Preview uses a fixed seed so edits are comparable.
+              </p>
+            </div>
+          </.focus_wrap>
         </div>
         <div
           :if={@note_metric}

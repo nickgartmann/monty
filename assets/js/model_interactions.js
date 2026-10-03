@@ -3,7 +3,7 @@
 // positions and content remain server-owned.
 import {centeredPosition, readGeometry} from "./canvas_geometry.mjs"
 import {CanvasDrag, isCardControl} from "./canvas_drag.mjs"
-import {CanvasPan} from "./canvas_pan.mjs"
+import {CanvasPan, isCanvasControl} from "./canvas_pan.mjs"
 import {canvasDebug} from "./canvas_debug.mjs"
 
 export const ModelInteractions = {
@@ -48,7 +48,7 @@ export const ModelInteractions = {
     this.dblclick = event => {
       const element = canvas()
       const pane = element?.closest(".canvas-scroll")
-      if (this.canvasDrag.busy || this.canvasPan.busy ||
+      if (isCanvasControl(event.target) || this.canvasDrag.busy || this.canvasPan.busy ||
           element?.dataset.editable !== "true" || !pane?.contains(event.target)) return
       if (event.target.closest("[data-metric-id]")) return
       const grid = geometry(element)
@@ -72,7 +72,20 @@ export const ModelInteractions = {
       })
     }
     this.keydown = event => {
-      if (this.canvasDrag.busy || this.canvasPan.busy) return
+      if (event.defaultPrevented || event.isComposing || this.canvasDrag.busy || this.canvasPan.busy) return
+      if ((event.metaKey || event.ctrlKey) && (event.key === "z" || event.key === "Z") &&
+          !event.shiftKey && !event.altKey && !event.repeat) {
+        const undo = document.getElementById("undo")
+        // Keep native text undo and modal interactions separate from model history.
+        if (canvas()?.dataset.editable !== "true" || !undo || undo.disabled ||
+            this.canvasConnection !== "connected" || event.target.isContentEditable ||
+            event.target.closest("input, textarea, select") ||
+            document.querySelector('[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]')) return
+        event.preventDefault()
+        undo.click()
+        return
+      }
+      if (isCanvasControl(event.target)) return
       const card = event.target.closest("[data-metric-id]")
       const element = canvas()
       if (!card || !element?.contains(card) || event.altKey || event.ctrlKey || event.metaKey) return

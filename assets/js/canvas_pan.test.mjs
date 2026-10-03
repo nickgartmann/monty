@@ -39,7 +39,7 @@ function element() {
   }
 }
 
-function fixture({first = null, busy = false} = {}) {
+function fixture({first = null, busy = false, panelInPane = true} = {}) {
   const doc = new Events(), win = new Events(), host = new Events()
   win.setTimeout = setTimeout
   win.clearTimeout = clearTimeout
@@ -53,11 +53,14 @@ function fixture({first = null, busy = false} = {}) {
   }
   const pane = {...element(), clientHeight: 500, closest: () => null}
   const background = {closest: () => null}
-  const card = {closest: () => card}
+  const card = {closest: selector => selector.includes("[data-metric-id]") ? card : null}
   const cardChild = {closest: selector => selector.includes("[data-metric-id]") ? card : null}
   const input = {closest: () => input}
   const form = {closest: selector => selector.includes("form") ? form : null}
-  pane.contains = target => [pane, background, card, cardChild, input, form].includes(target)
+  const panel = {closest: selector => selector === "[data-canvas-controls]" ? panel : null}
+  const panelChild = {closest: selector => selector === "[data-canvas-controls]" ? panel : null}
+  pane.contains = target => [pane, background, card, cardChild, input, form].includes(target) ||
+    (panelInPane && [panel, panelChild].includes(target))
   const canvas = {
     dataset: {gridStep: "20", gridPadding: "32", cardWidth: "240", cardHeight: "120"},
     closest: () => pane,
@@ -71,7 +74,7 @@ function fixture({first = null, busy = false} = {}) {
     target: background, pointerId: 1, pointerType: "mouse", button: 0,
     isPrimary: true, clientX: x, clientY: y, ...extra,
   })
-  return {doc, win, host, pane, canvas, background, card, cardChild, input, form, pan, pointer}
+  return {doc, win, host, pane, canvas, background, card, cardChild, panel, panelChild, input, form, pan, pointer}
 }
 
 test("background drag pans in every direction without changing world coordinates", () => {
@@ -218,6 +221,21 @@ test("card descendants, controls, outside targets, and nonprimary buttons never 
   busy.pan.destroy()
 })
 
+test("floating controls and descendants cannot start a pan inside or outside the viewport", () => {
+  for (const panelInPane of [true, false]) {
+    const f = fixture({panelInPane})
+    for (const target of [f.panel, f.panelChild]) {
+      f.pointer("pointerdown", 100, 100, {target})
+      f.pointer("pointermove", 60, 140, {target})
+      f.pointer("pointerup", 60, 140, {target})
+      assert.equal(f.pan.busy, false)
+      assert.deepEqual(f.pan.position, {x: 0, y: 0})
+      assert.equal(f.host.capture, undefined)
+    }
+    f.pan.destroy()
+  }
+})
+
 test("touch and pen background gestures pan while unrelated pointer events are ignored", () => {
   for (const pointerType of ["touch", "pen"]) {
     const f = fixture()
@@ -263,6 +281,20 @@ test("panning suppresses accidental click/double-click but not the next intentio
   f.pan.destroy()
 })
 
+test("post-pan click suppression does not swallow floating control clicks or double-clicks", () => {
+  const f = fixture()
+  f.pointer("pointerdown", 100, 100)
+  f.pointer("pointermove", 60, 140)
+  f.pointer("pointerup", 60, 140)
+  for (const type of ["click", "dblclick"]) {
+    const event = f.doc.emit(type, {target: f.panelChild})
+    assert.equal(event.defaultPrevented, undefined)
+    assert.equal(event.stopped, undefined)
+  }
+  assert.equal(f.doc.emit("dblclick", {target: f.background}).stopped, true)
+  f.pan.destroy()
+})
+
 test("scrolling and focused-viewport arrows pan, without stealing card keys or browser zoom", () => {
   const f = fixture()
   const wheel = extra => f.doc.emit("wheel", {
@@ -278,6 +310,26 @@ test("scrolling and focused-viewport arrows pan, without stealing card keys or b
   f.doc.emit("keydown", {target: f.card, key: "ArrowDown"})
   assert.deepEqual(f.pan.position, {x: -50, y: -70})
   f.pan.destroy()
+})
+
+test("floating controls retain wheel and keys even during a pending pan", () => {
+  for (const panelInPane of [true, false]) {
+    const f = fixture({panelInPane})
+    for (const target of [f.panel, f.panelChild]) {
+      const wheel = f.doc.emit("wheel", {target, deltaX: 10, deltaY: 30, deltaMode: 0})
+      assert.equal(wheel.defaultPrevented, undefined)
+      assert.deepEqual(f.pan.position, {x: 0, y: 0})
+      const arrow = f.doc.emit("keydown", {target, key: "ArrowDown"})
+      assert.equal(arrow.defaultPrevented, undefined)
+    }
+    f.pointer("pointerdown", 100, 100)
+    const escape = f.doc.emit("keydown", {target: f.panelChild, key: "Escape"})
+    assert.equal(escape.defaultPrevented, undefined)
+    assert.equal(f.pan.busy, true)
+    f.doc.emit("keydown", {target: f.pane, key: "Escape"})
+    assert.equal(f.pan.busy, false)
+    f.pan.destroy()
+  }
 })
 
 test("viewport survives LiveView patches and starts with a reopened distant card visible", () => {
@@ -303,6 +355,17 @@ test("keyboard focus reveals offscreen cards by moving the camera, keeping dots 
   f.doc.emit("focusin", {target: f.card})
   assert.deepEqual(f.pan.position, {x: 304, y: -348})
   assert.equal(f.pane.style.getPropertyValue("--canvas-pan-y"), "-8px")
+  f.pan.destroy()
+})
+
+test("focus inside floating controls never reveals a card by shifting the camera", () => {
+  const f = fixture()
+  f.card.dataset = {gridX: "-16", gridY: "34"}
+  f.panelChild.closest = selector => selector === "[data-canvas-controls]" ? f.panel
+    : selector.includes("[data-metric-id]") ? f.card : null
+  f.pane.getBoundingClientRect = () => ({left: 0, right: 900, top: 100, bottom: 600})
+  f.doc.emit("focusin", {target: f.panelChild})
+  assert.deepEqual(f.pan.position, {x: 0, y: 0})
   f.pan.destroy()
 })
 
