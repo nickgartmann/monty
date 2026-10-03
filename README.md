@@ -232,8 +232,11 @@ Before deploying:
 
 1. Set `DATABASE_PATH` to a persistent writable SQLite file, and configure
    backups (including SQLite WAL considerations).
-2. Set `SECRET_KEY_BASE`, `PHX_HOST`, and `PHX_SERVER=true`. Terminate HTTPS
-   and configure secure forwarding according to the Phoenix deployment guide.
+2. Set `SECRET_KEY_BASE`, `PHX_HOST=monty.sufficient.software`, and
+   `PHX_SERVER=true` (the release `bin/server` script sets the latter). Terminate
+   HTTPS at the proxy and forward `X-Forwarded-Proto: https`; production already
+   uses this header for SSL redirects and HSTS. Only trusted proxies should be
+   able to reach the application port.
 3. Configure a production Swoosh email adapter in `config/runtime.exs` and a
    real sender in `Monty.Accounts.UserNotifier`. The local mailbox adapter and
    placeholder sender are **development-only**. Keep credentials in environment
@@ -242,6 +245,27 @@ Before deploying:
    exposing authentication to the public internet.
 5. Run migrations and `mix assets.deploy`; keep SQLite on a single writable
    application host or explicitly design a replication strategy.
+
+### Custom domain on Fly.io
+
+`fly.toml` keeps the Fly app name `montie`, but sets the public host to
+`monty.sufficient.software`. Production defaults to this domain even outside Fly.
+Generated URLs use HTTPS on port 443. LiveView WebSocket and long-poll origin
+checks allow only `https://monty.sufficient.software`; HTTP origins, other ports,
+subdomains, and `https://montie.fly.dev` are intentionally not allowed. Overriding
+`PHX_HOST` changes both the public URL and the allowed HTTPS origin together.
+Use a bare hostname, without a scheme, port, or path. Development is unchanged.
+
+Before switching traffic:
+
+1. Add a Fly certificate with `fly certs add monty.sufficient.software -a montie`.
+2. Create the DNS records Fly specifies, and verify certificate readiness with
+   `fly certs check monty.sufficient.software -a montie`.
+3. Deploy with `fly deploy`, ensuring no existing `PHX_HOST` secret overrides
+   the value in `fly.toml`.
+4. Open `https://monty.sufficient.software/try` and confirm the LiveView WebSocket
+   connects and editing works without origin-check errors. Use the custom domain,
+   not the old Fly hostname, for application links.
 
 The upstream repositories report MIT licenses. This implementation uses
 original code, examples, and visuals rather than copying their source or

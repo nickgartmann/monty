@@ -63,12 +63,14 @@ if config_env() == :prod do
       You can generate one by calling: mix phx.gen.secret
       """
 
-  host = System.get_env("PHX_HOST") || "example.com"
+  host = System.get_env("PHX_HOST") || "monty.sufficient.software"
 
   config :monty, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
   config :monty, MontyWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
+    # Both LiveView transports inherit this strict public-origin allowlist.
+    check_origin: ["https://#{host}"],
     http: [
       # Enable IPv6 and bind on all interfaces.
       # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.

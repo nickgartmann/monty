@@ -10,7 +10,7 @@ kill_signal = 'SIGTERM'
 [build]
 [env]
   DATABASE_PATH = '/db/monty.db'
-  PHX_HOST = 'montie.fly.dev'
+  PHX_HOST = 'monty.sufficient.software'
   PORT = '8080'
 
 [[mounts]]
