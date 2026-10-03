@@ -1,12 +1,19 @@
 // LiveView owns all cards and results. This ignored event bridge only handles
 // pointer gestures, downloads, and an asset-compatibility notice. Persisted card
 // positions and content remain server-owned.
-import {centeredPosition, clampPosition, readGeometry} from "./canvas_geometry.mjs"
+import {centeredPosition, readGeometry} from "./canvas_geometry.mjs"
 import {CanvasDrag} from "./canvas_drag.mjs"
+import {CanvasPan} from "./canvas_pan.mjs"
+import {canvasDebug} from "./canvas_debug.mjs"
 
 export const ModelInteractions = {
   mounted() {
     const canvas = () => document.getElementById(this.el.dataset.canvasId)
+    this.canvasConnection = "connected"
+    this.stopCanvasDebug = canvasDebug.attach({
+      host: this.el, getCanvas: canvas, getState: () => this.canvasDebugState(),
+    })
+    canvasDebug.record("liveview.mounted")
     const geometry = element => {
       const value = readGeometry(element?.dataset)
       if (!value) this.showCompatibilityNotice()
@@ -16,6 +23,7 @@ export const ModelInteractions = {
     this.canvasDrag = new CanvasDrag({
       host: this.el,
       getCanvas: canvas,
+      isBusy: () => this.canvasPan?.busy === true,
       onInvalidGeometry: () => this.showCompatibilityNotice(),
       onMove: (id, position, done) => {
         this.pushEvent("move-metric", {id, ...position}, () => {
@@ -24,10 +32,18 @@ export const ModelInteractions = {
       },
     })
     this.canvasDrag.mount()
+    this.canvasPan = new CanvasPan({
+      host: this.el, getCanvas: canvas,
+      // Camera gestures must not wait for a released card's server acknowledgement.
+      isBusy: () => this.canvasDrag.gesturing,
+      onRender: () => this.canvasDrag.refreshLinks(),
+    })
+    this.canvasPan.mount()
     this.dblclick = event => {
       const element = canvas()
       const pane = element?.closest(".canvas-scroll")
-      if (this.canvasDrag.busy || element?.dataset.editable !== "true" || !pane?.contains(event.target)) return
+      if (this.canvasDrag.busy || this.canvasPan.busy ||
+          element?.dataset.editable !== "true" || !pane?.contains(event.target)) return
       if (event.target.closest("[data-metric-id]")) return
       const grid = geometry(element)
       const width = Number(element.dataset.cardWidth), height = Number(element.dataset.cardHeight)
@@ -55,7 +71,7 @@ export const ModelInteractions = {
       })
     }
     this.keydown = event => {
-      if (this.canvasDrag.busy) return
+      if (this.canvasDrag.busy || this.canvasPan.busy) return
       const card = event.target.closest("[data-metric-id][data-movable=true], [data-metric-id][draggable=true]")
       const element = canvas()
       if (!card || !element?.contains(card) || event.altKey || event.ctrlKey || event.metaKey) return
@@ -67,10 +83,10 @@ export const ModelInteractions = {
       if (!grid) return
       const distance = event.shiftKey ? 5 : 1
       const current = {x: Number(card.dataset.gridX), y: Number(card.dataset.gridY)}
-      const position = clampPosition({
+      const position = {
         x: current.x + direction[0] * distance,
         y: current.y + direction[1] * distance,
-      }, grid)
+      }
       if (position.x !== current.x || position.y !== current.y) {
         this.pushEvent("move-metric", {id: card.dataset.metricId, ...position})
       }
@@ -86,7 +102,33 @@ export const ModelInteractions = {
       setTimeout(() => URL.revokeObjectURL(url), 1000)
     })
   },
+  canvasDebugState() {
+    const canvas = this.el.ownerDocument.getElementById(this.el.dataset.canvasId)
+    const pane = canvas?.closest(".canvas-scroll")
+    const drag = this.canvasDrag?.active, pan = this.canvasPan?.active
+    return {
+      connection: this.canvasConnection,
+      hostConnected: this.el.isConnected,
+      canvasConnected: canvas?.isConnected === true,
+      geometry: readGeometry(canvas?.dataset),
+      nativeScroll: {x: pane?.scrollLeft, y: pane?.scrollTop},
+      drag: {
+        phase: drag?.phase || "idle", pointerId: drag?.pointerId,
+        captured: drag?.captured === true,
+        nativeCapture: drag ? this.el.hasPointerCapture(drag.pointerId) : false,
+        cardConnected: drag?.card.isConnected,
+        source: drag?.source, target: drag?.target, occupied: drag?.invalid,
+      },
+      pan: {
+        phase: pan ? (pan.dragging ? "dragging" : "pending") : "idle",
+        pointerId: pan?.pointerId, captured: pan?.captured === true,
+        nativeCapture: pan ? this.el.hasPointerCapture(pan.pointerId) : false,
+        position: this.canvasPan?.position, origin: pan?.origin,
+      },
+    }
+  },
   showCompatibilityNotice() {
+    canvasDebug.record("geometry.incompatible")
     if (this.el.querySelector("#canvas-update-notice")) return
     const notice = document.createElement("div")
     notice.id = "canvas-update-notice"
@@ -103,11 +145,21 @@ export const ModelInteractions = {
     this.el.append(notice)
   },
   disconnected() {
-    this.canvasDrag?.cancel()
+    this.canvasConnection = "disconnected"
+    canvasDebug.record("liveview.disconnected")
+    this.canvasDrag?.cancel("disconnected")
+    this.canvasPan?.cancel("disconnected")
+  },
+  reconnected() {
+    this.canvasConnection = "connected"
+    canvasDebug.record("liveview.reconnected")
   },
   destroyed() {
+    canvasDebug.record("liveview.destroyed")
     this.canvasDrag?.destroy()
+    this.canvasPan?.destroy()
     document.removeEventListener("dblclick", this.dblclick)
     document.removeEventListener("keydown", this.keydown)
+    this.stopCanvasDebug?.()
   }
 }

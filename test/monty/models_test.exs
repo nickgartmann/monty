@@ -1,7 +1,6 @@
 defmodule Monty.ModelsTest do
   use Monty.DataCase
 
-  alias Monty.Canvas
   alias Monty.Models
   alias Monty.Models.Model
   alias Monty.Repo
@@ -148,7 +147,7 @@ defmodule Monty.ModelsTest do
   end
 
   describe "metric validation" do
-    test "accepts the metric contract and rejects malformed, duplicate or out-of-bounds metrics",
+    test "accepts the metric contract and rejects malformed or duplicate metrics",
          %{
            owner: owner
          } do
@@ -164,9 +163,11 @@ defmodule Monty.ModelsTest do
         [Map.put(base, "distribution", "triangular")],
         [Map.put(base, "input", String.duplicate("x", 1_001))],
         [Map.put(base, "notes", String.duplicate("n", 2_001))],
-        [Map.put(base, "x", Canvas.max_x() + 1)],
-        [Map.put(base, "y", Canvas.max_y() + 1)],
-        [Map.put(base, "y", -1)],
+        [Map.put(base, "x", "201")],
+        [Map.put(base, "y", 1.5)],
+        [Map.put(base, "x", 9_007_199_254_740_992)],
+        [Map.put(base, "y", -9_007_199_254_740_992)],
+        [Map.delete(base, "x")],
         [base, Map.put(second, "key", "A")],
         [base, Map.put(second, "x", 0) |> Map.put("y", 0)],
         [base, Map.put(second, "id", base["id"])],
@@ -181,14 +182,20 @@ defmodule Monty.ModelsTest do
       end
     end
 
-    test "fine-grid bounds and sub-card positions remain valid", %{owner: owner} do
-      base = metric_fixture(%{"x" => Canvas.max_x(), "y" => Canvas.max_y()})
-      nearby = metric_fixture(%{"key" => "B", "x" => Canvas.max_x() - 1, "y" => Canvas.max_y()})
+    test "signed coordinates beyond the former limits persist on create and update", %{
+      owner: owner
+    } do
+      base = metric_fixture(%{"x" => -201, "y" => 1201})
+      nearby = metric_fixture(%{"key" => "B", "x" => -202, "y" => 1201})
 
       assert {:ok, model} =
                Models.create_model(owner, %{title: "Fine grid", metrics: [base, nearby]})
 
       assert model.metrics == [base, nearby]
+
+      moved = Map.merge(base, %{"x" => 201, "y" => -1201})
+      assert {:ok, updated} = Models.update_model(owner, model, %{metrics: [moved, nearby]})
+      assert updated.metrics == [moved, nearby]
     end
 
     test "title and description are bounded", %{owner: owner} do

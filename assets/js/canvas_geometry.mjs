@@ -1,7 +1,7 @@
 // Coordinates sent to LiveView are indices on its dot grid, not card-sized cells.
-// Geometry comes from server-rendered data attributes, including bounds.
+// The world has no edges; only grid spacing and its origin come from the server.
 export function readGeometry(dataset) {
-  const keys = {step: "gridStep", padding: "gridPadding", maxX: "gridMaxX", maxY: "gridMaxY"}
+  const keys = {step: "gridStep", padding: "gridPadding"}
   const geometry = {}
 
   for (const [key, attribute] of Object.entries(keys)) {
@@ -12,21 +12,20 @@ export function readGeometry(dataset) {
     geometry[key] = value
   }
 
+  for (const axis of ["X", "Y"]) {
+    const value = Number(dataset[`gridOrigin${axis}`] ?? "0")
+    if (!Number.isSafeInteger(value)) return null
+    geometry[`origin${axis}`] = value
+  }
+
   return geometry.step > 0 ? geometry : null
 }
 
-export function clampPosition({x, y}, {maxX, maxY}) {
+export function snapPosition({left, top}, {step, padding, originX = 0, originY = 0}) {
   return {
-    x: Math.max(0, Math.min(maxX, x)),
-    y: Math.max(0, Math.min(maxY, y)),
+    x: originX + Math.round((left - padding) / step),
+    y: originY + Math.round((top - padding) / step),
   }
-}
-
-export function snapPosition({left, top}, {step, padding, maxX, maxY}) {
-  return clampPosition({
-    x: Math.round((left - padding) / step),
-    y: Math.round((top - padding) / step),
-  }, {maxX, maxY})
 }
 
 export function centeredPosition({left, top}, {width, height}, geometry) {

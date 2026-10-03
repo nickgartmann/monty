@@ -41,15 +41,29 @@ defmodule Monty.ModelFileTest do
     refute Map.has_key?(Jason.decode!(json), "user_id")
   end
 
-  test "version 2 round-trips fine coordinates without changing ownership or attributes" do
-    metric = Examples.metric("A", "Fine position", "42", 13, 23)
+  test "version 2 round-trips signed, unbounded coordinates without changing attributes" do
+    metric = Examples.metric("A", "Fine position", "42", -201, 1201)
     model = %Model{title: "Fine", metrics: [metric]}
     assert {:ok, json} = ModelFile.encode(model)
 
-    assert {:ok, %{"metrics" => [^metric], "visibility" => "private"}} =
+    assert {:ok, %{"metrics" => [^metric], "visibility" => "private"} = attrs} =
              ModelFile.decode(json)
 
     assert Jason.decode!(json)["version"] == 2
+    assert Models.change_model(%Model{}, attrs).valid?
+
+    for invalid <- [
+          Map.put(metric, "x", "-201"),
+          Map.put(metric, "y", 1.5),
+          Map.put(metric, "x", 9_007_199_254_740_993)
+        ] do
+      assert {:ok, attrs} =
+               %{format: "monty", version: 2, title: "Invalid", metrics: [invalid]}
+               |> Jason.encode!()
+               |> ModelFile.decode()
+
+      refute Models.change_model(%Model{}, attrs).valid?
+    end
   end
 
   test "version 1 imports convert every metric to the nearest dot before validation" do

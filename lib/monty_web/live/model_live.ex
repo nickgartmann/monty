@@ -108,8 +108,8 @@ defmodule MontyWeb.ModelLive do
     with true <- socket.assigns.editable?,
          metric when not is_nil(metric) <-
            Enum.find(socket.assigns.model.metrics, &(&1["id"] == id)),
-         {:ok, x} <- coordinate(x, Canvas.max_x()),
-         {:ok, y} <- coordinate(y, Canvas.max_y()),
+         {:ok, x} <- coordinate(x),
+         {:ok, y} <- coordinate(y),
          false <-
            Enum.any?(
              socket.assigns.model.metrics,
@@ -332,10 +332,9 @@ defmodule MontyWeb.ModelLive do
 
   defp recompute(socket) do
     results = Simulation.run(socket.assigns.model.metrics, samples: @samples, seed: {41, 72, 19})
-    {width, height} = Canvas.size(socket.assigns.model.metrics)
 
     socket
-    |> assign(results: results, canvas_width: width, canvas_height: height)
+    |> assign(results: results)
     |> restream()
   end
 
@@ -393,8 +392,8 @@ defmodule MontyWeb.ModelLive do
         {:ok, Canvas.free_position(metrics)}
 
       {{:ok, x}, {:ok, y}} ->
-        with {:ok, x} <- coordinate(x, Canvas.max_x()),
-             {:ok, y} <- coordinate(y, Canvas.max_y()),
+        with {:ok, x} <- coordinate(x),
+             {:ok, y} <- coordinate(y),
              false <- Enum.any?(metrics, &(&1["x"] == x && &1["y"] == y)) do
           {:ok, {x, y}}
         else
@@ -406,17 +405,18 @@ defmodule MontyWeb.ModelLive do
     end
   end
 
-  defp coordinate(value, max) when is_integer(value) and value >= 0 and value <= max,
-    do: {:ok, value}
+  defp coordinate(value) when is_integer(value) do
+    if Canvas.valid_coordinate?(value), do: {:ok, value}, else: :error
+  end
 
-  defp coordinate(value, max) when is_binary(value) do
+  defp coordinate(value) when is_binary(value) do
     case Integer.parse(value) do
-      {value, ""} -> coordinate(value, max)
+      {value, ""} -> coordinate(value)
       _ -> :error
     end
   end
 
-  defp coordinate(_, _), do: :error
+  defp coordinate(_), do: :error
 
   defp next_key(metrics) do
     # Do not reuse a deleted reference while a formula still names it.
@@ -437,14 +437,13 @@ defmodule MontyWeb.ModelLive do
 
   defp metric_style(metric) do
     {left, top} = Canvas.pixel_position(metric)
-    "left: #{left}px; top: #{top}px;"
+    "--metric-left: #{left}px; --metric-top: #{top}px;"
   end
 
-  defp canvas_style(width, height) do
+  defp canvas_style do
     dot_offset = rem(Canvas.padding(), Canvas.grid_step()) - div(Canvas.grid_step(), 2)
 
-    "width: #{width}px; height: #{height}px; " <>
-      "--canvas-grid-step: #{Canvas.grid_step()}px; --canvas-dot-offset: #{dot_offset}px; " <>
+    "--canvas-grid-step: #{Canvas.grid_step()}px; --canvas-dot-offset: #{dot_offset}px; " <>
       "--metric-width: #{Canvas.card_width()}px; --metric-height: #{Canvas.card_height()}px;"
   end
 
@@ -639,7 +638,9 @@ defmodule MontyWeb.ModelLive do
             <.icon name="hero-arrow-uturn-left" class="size-4" />
           </button>
           <span class="ml-2 hidden text-xs text-slate-400 sm:block">{length(@model.metrics)} metrics · {@samples} correlated draws</span>
-          <span :if={@editable?} class="hidden text-xs text-slate-400 lg:block">Double-click canvas to add</span>
+          <span class="hidden text-xs text-slate-400 lg:block">
+            Drag background to pan<span :if={@editable?}> · Double-click to add</span>
+          </span>
           <div class="ml-auto flex items-center gap-2">
             <button id="resample" phx-click="resample" class="button-ghost"><.icon
               name="hero-arrow-path"
@@ -681,30 +682,35 @@ defmodule MontyWeb.ModelLive do
           Changes preview immediately; save to keep them. Move cards directly and use the shadow
           to preview where they will snap to the background dots
           ({Canvas.grid_step()}px). Use the position controls or arrow keys on a focused card to move one dot;
-          Shift + arrow moves five dots. Press Escape to cancel a drag.
+          Shift + arrow moves five dots. Drag the background or scroll to pan in any direction.
+          Press Escape to cancel a drag.
           <span class="block text-xs text-teal-700">Simulation estimates are approximate, not guarantees. Normal draws may fall outside the entered interval. Preview uses a fixed seed so edits are comparable.</span>
         </div>
 
         <div class="model-workspace">
-          <section class="canvas-scroll" aria-label="Model canvas">
+          <section
+            id="canvas-viewport"
+            class="canvas-scroll"
+            style={canvas_style()}
+            data-canvas-viewport
+            tabindex="0"
+            aria-label="Model canvas. Drag background or use arrow keys to pan."
+          >
             <div
               id="model-canvas"
-              class="canvas-surface relative"
-              style={canvas_style(@canvas_width, @canvas_height)}
+              class="canvas-surface"
               data-model-canvas
               data-editable={to_string(@editable?)}
               data-card-width={Canvas.card_width()}
               data-card-height={Canvas.card_height()}
               data-grid-step={Canvas.grid_step()}
               data-grid-padding={Canvas.padding()}
-              data-grid-max-x={Canvas.max_x()}
-              data-grid-max-y={Canvas.max_y()}
               data-link-bend={Canvas.link_bend()}
             >
               <svg
-                class="pointer-events-none absolute inset-0"
-                width={@canvas_width}
-                height={@canvas_height}
+                class="canvas-connections pointer-events-none absolute left-0 top-0"
+                width="1"
+                height="1"
                 aria-hidden="true"
               >
                 <defs>

@@ -87,12 +87,12 @@ defmodule Monty.Models.Model do
       "notes are too long"
     )
     |> maybe_error(
-      not (is_integer(metric["x"]) and metric["x"] in 0..Canvas.max_x()),
-      "x must be between 0 and #{Canvas.max_x()}"
+      not Canvas.valid_coordinate?(metric["x"]),
+      "x must be a browser-safe integer"
     )
     |> maybe_error(
-      not (is_integer(metric["y"]) and metric["y"] in 0..Canvas.max_y()),
-      "y must be between 0 and #{Canvas.max_y()}"
+      not Canvas.valid_coordinate?(metric["y"]),
+      "y must be a browser-safe integer"
     )
   end
 

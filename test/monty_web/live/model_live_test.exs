@@ -10,7 +10,7 @@ defmodule MontyWeb.ModelLiveTest do
   test "sandbox renders and calculates without an account", %{conn: conn} do
     {:ok, view, _} = live(conn, ~p"/try")
     assert has_element?(view, "#model-canvas")
-    assert has_element?(view, "#model-canvas[style*='--metric-height: 120px;']")
+    assert has_element?(view, "#canvas-viewport[style*='--metric-height: 120px;']")
     assert has_element?(view, "#metrics button", "Cash in the bank")
     assert has_element?(view, "#metrics [data-metric-summary]", "450.0k")
     assert has_element?(view, "#metrics [data-metric-input]", "450000")
@@ -175,6 +175,24 @@ defmodule MontyWeb.ModelLiveTest do
       assert has_element?(reopened, "#metrics button[data-grid-x='15'][data-grid-y='14']")
     end
 
+    test "adds and saves signed positions beyond former limits", %{conn: conn, model: model} do
+      {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
+
+      render_click(view, "add-metric", %{"x" => "-201", "y" => "1201"})
+      assert has_element?(view, "#metrics button[data-grid-x='-201'][data-grid-y='1201']")
+
+      render_click(view, "add-metric", %{"x" => 201, "y" => -1201})
+      assert has_element?(view, "#metrics button[data-grid-x='201'][data-grid-y='-1201']")
+
+      view |> element("#save-model") |> render_click()
+
+      assert [
+               %{"x" => 0, "y" => 0},
+               %{"x" => -201, "y" => 1201},
+               %{"x" => 201, "y" => -1201}
+             ] = Repo.reload!(model).metrics
+    end
+
     test "undo removes a newly placed metric", %{conn: conn, model: model} do
       {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
       render_click(view, "add-metric", %{"x" => 15, "y" => 14})
@@ -193,10 +211,10 @@ defmodule MontyWeb.ModelLiveTest do
 
       for params <- [
             %{"x" => 0, "y" => 0},
-            %{"x" => -1, "y" => 2},
-            %{"x" => Canvas.max_x() + 1, "y" => 2},
-            %{"x" => 2, "y" => Canvas.max_y() + 1},
             %{"x" => "1.5", "y" => 2},
+            %{"x" => "2oops", "y" => 2},
+            %{"x" => "9007199254740992", "y" => 2},
+            %{"x" => 2, "y" => nil},
             %{"x" => 2},
             %{"y" => 2}
           ] do
@@ -286,6 +304,26 @@ defmodule MontyWeb.ModelLiveTest do
       assert [%{"x" => 1, "y" => 0}] = Repo.reload!(model).metrics
     end
 
+    test "position controls and moves cross zero and accept unbounded integer coordinates", %{
+      conn: conn,
+      model: model
+    } do
+      {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
+      id = hd(model.metrics)["id"]
+
+      view |> element("#move-left") |> render_click()
+      view |> element("#move-up") |> render_click()
+      assert has_element?(view, "#metrics-#{id}[data-grid-x='-1'][data-grid-y='-1']")
+
+      render_click(view, "move-metric", %{"id" => id, "x" => "201", "y" => "-1201"})
+      assert has_element?(view, "#metrics-#{id}[data-grid-x='201'][data-grid-y='-1201']")
+      view |> element("#save-model") |> render_click()
+      assert [%{"x" => 201, "y" => -1201}] = Repo.reload!(model).metrics
+
+      {:ok, reopened, _} = live(conn, ~p"/models/#{model.id}")
+      assert has_element?(reopened, "#metrics-#{id}[data-grid-x='201'][data-grid-y='-1201']")
+    end
+
     test "invalid or unchanged moves do not create a draft or undo entry", %{
       conn: conn,
       model: model
@@ -295,10 +333,10 @@ defmodule MontyWeb.ModelLiveTest do
 
       for {x, y, metric_id} <- [
             {0, 0, id},
-            {-1, 0, id},
-            {Canvas.max_x() + 1, 0, id},
-            {0, Canvas.max_y() + 1, id},
             {"1.5", 0, id},
+            {"1oops", 0, id},
+            {9_007_199_254_740_992, 0, id},
+            {nil, 0, id},
             {1, 1, Ecto.UUID.generate()}
           ] do
         render_click(view, "move-metric", %{"id" => metric_id, "x" => x, "y" => y})

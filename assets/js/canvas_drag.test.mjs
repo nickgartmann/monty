@@ -1,6 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import {CanvasDrag, preserveDragStyles} from "./canvas_drag.mjs"
+import {CanvasPan} from "./canvas_pan.mjs"
 
 class Events {
   constructor() { this.listeners = new Map() }
@@ -81,7 +82,7 @@ class Element extends Events {
   getBoundingClientRect() { return this.rect }
 }
 
-function fixture({editable = true, legacy = false, geometry = true} = {}) {
+function fixture({editable = true, legacy = false, geometry = true, busy = false} = {}) {
   const win = new Events()
   win.innerWidth = 500
   win.innerHeight = 400
@@ -106,7 +107,7 @@ function fixture({editable = true, legacy = false, geometry = true} = {}) {
   pane.rect = {left: 100, top: 100, right: 400, bottom: 300}
   const canvas = new Element(doc)
   canvas.rect = {left: 100, top: 100, right: 700, bottom: 900}
-  if (geometry) canvas.dataset = {gridStep: "20", gridPadding: "32", gridMaxX: "20", gridMaxY: "30"}
+  if (geometry) canvas.dataset = {gridStep: "20", gridPadding: "32"}
   pane.append(canvas)
   const card = new Element(doc)
   card.dataset = {metricId: "card-1", gridX: "2", gridY: "1", movable: String(editable)}
@@ -126,6 +127,7 @@ function fixture({editable = true, legacy = false, geometry = true} = {}) {
   let invalidGeometry = 0
   const drag = new CanvasDrag({
     host, getCanvas: () => canvas,
+    isBusy: () => busy,
     onMove: (id, position, done) => moves.push({id, position, done}),
     onInvalidGeometry: () => invalidGeometry++,
   })
@@ -172,6 +174,136 @@ test("release flushes its final position even before a queued frame is painted",
   f.moves[0].done()
 })
 
+test("a rapid card drag commits the release position even without a threshold-crossing move event", () => {
+  for (const intermediate of [null, [185, 163]]) {
+    const f = fixture()
+    f.pointer("pointerdown", 182, 160)
+    if (intermediate) f.pointer("pointermove", ...intermediate)
+    // Browsers no longer allow acquiring capture once the pointer is released.
+    f.host.setPointerCapture = () => { throw Error("Cannot capture a released pointer") }
+    const released = f.pointer("pointerup", 207, 171)
+    assert.equal(released.defaultPrevented, true)
+    assert.equal(f.win.frames.size, 0)
+    assert.deepEqual(f.moves[0]?.position, {x: 3, y: 2})
+    assert.equal(f.card.style.transform, "translate3d(20px, 20px, 0) rotate(1deg)")
+    assert.equal(f.doc.emit("click", {detail: 1}).defaultPrevented, true)
+    f.moves[0].done()
+    f.drag.destroy()
+  }
+})
+
+test("a previous capture-loss event cannot cancel a new drag with the same pointer ID", () => {
+  const f = fixture()
+  f.pointer("pointerdown", 182, 160)
+  f.pointer("pointermove", 207, 171)
+  f.pointer("pointerup", 207, 171)
+  f.moves[0].done()
+  f.pointer("pointerdown", 182, 160)
+  f.pointer("pointermove", 222, 200)
+  f.host.emit("lostpointercapture", {pointerId: 1})
+  assert.equal(f.drag.busy, true)
+  assert.equal(f.host.capture, 1)
+  f.pointer("pointerup", 222, 200)
+  assert.deepEqual(f.moves[1].position, {x: 4, y: 3})
+  f.moves[1].done()
+  f.drag.destroy()
+})
+
+test("recorded release ordering commits once when capture loss precedes pointerup", () => {
+  const f = fixture()
+  f.win.innerWidth = 1280
+  f.win.innerHeight = 1000
+  f.canvas.rect = {left: 0, top: 271.25, right: 925, bottom: 1334.5}
+  f.pane.rect = {...f.canvas.rect}
+  Object.assign(f.card.dataset, {gridX: "36", gridY: "13"})
+  f.card.rect = {left: 752, top: 563.25, right: 992, bottom: 683.25, width: 240, height: 120}
+  f.pointer("pointerdown", 866.2109375, 599.18359375, {buttons: 1})
+  for (const [x, y] of [
+    [867.16015625, 596.5703125], [866.28515625, 596.046875],
+    [845.453125, 600.94921875], [790.609375, 623.67578125],
+    [737.5078125, 650.22265625], [642.046875, 700.3046875],
+    [541.16796875, 754.0078125],
+  ]) f.pointer("pointermove", x, y, {buttons: 1})
+
+  // Trace events 509–513: capture loss with buttons already up, then move/up.
+  const release = {pointerId: 1, buttons: 0, clientX: 499.91796875, clientY: 776.30078125}
+  f.host.capture = null
+  f.host.emit("lostpointercapture", release)
+  assert.equal(f.moves.length, 1)
+  assert.deepEqual(f.moves[0].position, {x: 18, y: 22})
+  assert.equal(f.card.style.transform, "translate3d(-360px, 180px, 0) rotate(1deg)")
+  f.pointer("pointermove", release.clientX, release.clientY, {buttons: 0, target: f.canvas})
+  f.pointer("pointerup", release.clientX, release.clientY, {buttons: 0, target: f.canvas})
+  assert.equal(f.moves.length, 1)
+  f.moves[0].done()
+  f.pointer("pointerup", release.clientX, release.clientY, {buttons: 0, target: f.canvas})
+  assert.equal(f.moves.length, 1)
+  f.drag.destroy()
+})
+
+test("a released-primary move finishes a card drop without waiting for pointerup", () => {
+  for (const buttons of [0, 2]) {
+    const f = fixture()
+    f.pointer("pointerdown", 182, 160, {buttons: 1})
+    f.pointer("pointermove", 207, 171, {buttons: 1})
+    f.pointer("pointermove", 222, 200, {buttons})
+    assert.deepEqual(f.moves[0]?.position, {x: 4, y: 3})
+    assert.equal(f.host.capture, null)
+    f.pointer("pointermove", 300, 250, {buttons: 0})
+    f.pointer("pointerup", 222, 200, {buttons: 0})
+    assert.equal(f.moves.length, 1)
+    f.moves[0].done()
+    f.drag.destroy()
+  }
+})
+
+test("a pending card gesture recovers release without capturing an already released pointer", () => {
+  const f = fixture()
+  f.pointer("pointerdown", 182, 160, {buttons: 1})
+  f.host.setPointerCapture = () => { throw Error("Cannot capture a released pointer") }
+  f.pointer("pointermove", 207, 171, {buttons: 0})
+  assert.deepEqual(f.moves[0]?.position, {x: 3, y: 2})
+  assert.equal(f.host.capture, null)
+  f.moves[0].done()
+  f.drag.destroy()
+})
+
+test("explicit pointer cancellation is not resurrected by released-button events", () => {
+  const f = fixture()
+  f.pointer("pointerdown", 182, 160, {buttons: 1})
+  f.pointer("pointermove", 207, 171, {buttons: 1})
+  f.pointer("pointercancel", 207, 171, {buttons: 0})
+  f.host.emit("lostpointercapture", {pointerId: 1, buttons: 0, clientX: 207, clientY: 171})
+  f.pointer("pointermove", 207, 171, {buttons: 0})
+  f.pointer("pointerup", 207, 171, {buttons: 0})
+  assert.deepEqual(f.moves, [])
+  assert.equal(f.drag.busy, false)
+  assert.equal(f.card.style.transform, "rotate(1deg)")
+  f.drag.destroy()
+})
+
+test("capture loss with the primary button held still cancels a card drag", () => {
+  const f = fixture()
+  f.pointer("pointerdown", 182, 160, {buttons: 1})
+  f.pointer("pointermove", 207, 171, {buttons: 1})
+  f.host.capture = null
+  f.host.emit("lostpointercapture", {pointerId: 1, buttons: 1, clientX: 207, clientY: 171})
+  assert.equal(f.drag.busy, false)
+  assert.deepEqual(f.moves, [])
+  assert.equal(f.card.style.transform, "rotate(1deg)")
+  f.drag.destroy()
+})
+
+test("another active canvas gesture prevents a card drag from taking ownership", () => {
+  const f = fixture({busy: true})
+  f.pointer("pointerdown", 182, 160, {pointerId: 2, pointerType: "pen"})
+  f.pointer("pointermove", 222, 200, {pointerId: 2})
+  assert.equal(f.drag.busy, false)
+  assert.equal(f.host.capture, null)
+  assert.deepEqual(f.moves, [])
+  f.drag.destroy()
+})
+
 test("LiveView preserves only transient drag presentation while updating card content and coordinates", () => {
   const f = fixture()
   f.pointer("pointerdown", 182, 160)
@@ -194,13 +326,85 @@ test("LiveView preserves only transient drag presentation while updating card co
 test("Escape cannot undo a drop already submitted, and stale acknowledgements are ignored", () => {
   const f = fixture()
   f.pointer("pointerdown", 182, 160)
+  assert.equal(f.drag.gesturing, true)
   f.pointer("pointermove", 207, 171)
   f.pointer("pointerup", 207, 171)
   f.doc.emit("keydown", {key: "Escape"})
   assert.equal(f.drag.busy, true)
+  assert.equal(f.drag.gesturing, false)
   assert.equal(f.moves[0].done(), true)
   assert.equal(f.drag.busy, false)
+  assert.equal(f.drag.gesturing, false)
   assert.equal(f.moves[0].done(), false)
+})
+
+test("pan continues through a pending card acknowledgement and keeps preview links attached", () => {
+  const f = fixture()
+  f.win.setTimeout = setTimeout
+  f.win.clearTimeout = clearTimeout
+  f.pane.style.setProperty = (key, value) => { f.pane.style[key] = value }
+  f.pane.classList.toggle = (name, present) =>
+    present ? f.pane.classList.add(name) : f.pane.classList.remove(name)
+  f.canvas.querySelector = selector => f.canvas.querySelectorAll(selector)[0] || null
+  Object.assign(f.canvas.dataset, {cardWidth: "240", cardHeight: "188", linkBend: "50"})
+  const pan = new CanvasPan({
+    host: f.host, getCanvas: () => f.canvas,
+    isBusy: () => f.drag.gesturing,
+    onRender: () => f.drag.refreshLinks(),
+  })
+  // Model the camera's CSS rebasing and the card's transient transform.
+  f.canvas.getBoundingClientRect = () => ({
+    left: f.pane.rect.left + (Number.parseFloat(f.pane.style["--canvas-pan-x"]) || 0),
+    top: f.pane.rect.top + (Number.parseFloat(f.pane.style["--canvas-pan-y"]) || 0),
+  })
+  const cardRect = card => {
+    const [dx, dy] = card.style.transform?.match(/translate3d\(([-\d.]+)px, ([-\d.]+)px, 0\)/)?.slice(1).map(Number) || [0, 0]
+    const left = f.pane.rect.left + 32 + Number(card.dataset.gridX) * 20 + pan.position.x + dx
+    const top = f.pane.rect.top + 32 + Number(card.dataset.gridY) * 20 + pan.position.y + dy
+    return {left, top, right: left + 240, bottom: top + 188, width: 240, height: 188}
+  }
+  f.card.getBoundingClientRect = () => cardRect(f.card)
+  const other = new Element(f.doc)
+  other.dataset = {metricId: "card-2", gridX: "12", gridY: "3"}
+  other.getBoundingClientRect = () => cardRect(other)
+  f.canvas.append(other)
+  const line = new Element(f.doc)
+  line.dataset = {sourceId: "card-1", targetId: "card-2"}
+  f.canvas.append(line)
+  pan.mount()
+
+  f.pointer("pointerdown", 182, 160)
+  f.pointer("pointermove", 207, 171)
+  f.pointer("pointerup", 207, 171)
+  assert.equal(f.drag.busy, true)
+  assert.equal(f.drag.gesturing, false)
+
+  f.pointer("pointerdown", 350, 200, {target: f.canvas})
+  f.pointer("pointermove", 300, 250, {target: f.canvas})
+  assert.equal(pan.busy, true)
+  assert.deepEqual(pan.position, {x: -90, y: 30})
+  const beforeAck = f.card.getBoundingClientRect()
+  const canvasRect = f.canvas.getBoundingClientRect()
+  const expectedStart = `M ${beforeAck.right - canvasRect.left} ${(beforeAck.top + beforeAck.bottom) / 2 - canvasRect.top} C `
+  assert.ok(line.getAttribute("d").startsWith(expectedStart))
+
+  // A LiveView patch can replace SVG paths before acknowledging the card move.
+  line.remove()
+  const patchedLine = new Element(f.doc)
+  patchedLine.dataset = {...line.dataset}
+  f.canvas.append(patchedLine)
+  f.doc.emit("phx:update")
+  assert.ok(patchedLine.getAttribute("d").startsWith(expectedStart))
+  Object.assign(f.card.dataset, {gridX: "3", gridY: "2"})
+  assert.equal(f.moves[0].done(), true)
+  assert.equal(pan.busy, true)
+  assert.equal(f.drag.busy, false)
+  assert.deepEqual(f.card.getBoundingClientRect(), beforeAck)
+  f.pointer("pointerup", 300, 250, {target: f.canvas})
+  assert.deepEqual(pan.position, {x: -90, y: 30})
+  assert.equal(pan.busy, false)
+  pan.destroy()
+  f.drag.destroy()
 })
 
 test("threshold preserves clicks; editable pointer moves the original card and separate snapped shadow", () => {
@@ -290,9 +494,9 @@ test("scroll and canvas bounds refresh with the last pointer coordinates", () =>
   assert.equal(f.drag.preview.dataset.gridX, "4")
   assert.equal(f.drag.preview.style.transform, "translate3d(92px, 62px, 0)")
   f.pointer("pointermove", 10000, -1000, {target: f.host})
-  assert.equal(f.drag.preview.dataset.gridX, "20")
-  assert.equal(f.drag.preview.dataset.gridY, "0")
-  assert.equal(f.card.style.transform, "translate3d(360px, -20px, 0) rotate(1deg)")
+  assert.equal(f.drag.preview.dataset.gridX, "494")
+  assert.equal(f.drag.preview.dataset.gridY, "-56")
+  assert.equal(f.card.style.transform, "translate3d(9838px, -1150px, 0) rotate(1deg)")
   f.drag.cancel()
 })
 
@@ -349,6 +553,7 @@ test("cancellation, disconnect, teardown, and stale acknowledgements restore sta
   assert.equal(f.card.style.transform, "rotate(1deg)")
   assert.equal(f.doc.emit("click", {target: f.card, detail: 1}).defaultPrevented, true)
   start()
+  f.host.capture = null
   f.host.emit("lostpointercapture", {pointerId: 1})
   assert.equal(f.drag.busy, false)
   start()
@@ -411,4 +616,21 @@ test("incident connection endpoints follow the card and are recomputed after ack
   f.card.style.left = "92px"
   f.moves[0].done()
   assert.equal(line.attributes.d, "M 332 146 C 382 146, 222 186, 272 186")
+})
+
+test("card drops in a rebased distant viewport persist canonical world coordinates", () => {
+  const f = fixture()
+  f.canvas.dataset.gridOriginX = "1000000000"
+  f.canvas.dataset.gridOriginY = "-1000000000"
+  f.card.dataset.gridX = "1000000002"
+  f.card.dataset.gridY = "-999999999"
+  f.pointer("pointerdown", 182, 160)
+  f.pointer("pointermove", 207, 171)
+  assert.equal(f.drag.preview.dataset.gridX, "1000000003")
+  assert.equal(f.drag.preview.dataset.gridY, "-999999998")
+  f.pointer("pointerup", 207, 171)
+  assert.deepEqual(f.moves[0].position, {x: 1_000_000_003, y: -999_999_998})
+  assert.equal(f.card.style.transform, "translate3d(20px, 20px, 0) rotate(1deg)")
+  f.moves[0].done()
+  f.drag.destroy()
 })

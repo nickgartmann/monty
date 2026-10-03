@@ -1,4 +1,7 @@
 import {readGeometry, snapPosition} from "./canvas_geometry.mjs"
+import {canvasDebug} from "./canvas_debug.mjs"
+import {updateCanvasLinks} from "./canvas_links.mjs"
+import {primaryButtonReleased} from "./canvas_pointer.mjs"
 
 const DRAG_THRESHOLD = 5
 
@@ -29,11 +32,12 @@ export function preserveDragStyles(from, to) {
 }
 
 export class CanvasDrag {
-  constructor({host, getCanvas, onMove, onInvalidGeometry}) {
+  constructor({host, getCanvas, onMove, onInvalidGeometry, isBusy = () => false}) {
     this.host = host
     this.getCanvas = getCanvas
     this.onMove = onMove
     this.onInvalidGeometry = onInvalidGeometry
+    this.isBusy = isBusy
     this.doc = host.ownerDocument
     this.win = this.doc.defaultView
     this.active = null
@@ -54,6 +58,10 @@ export class CanvasDrag {
 
   get busy() {
     return this.active !== null
+  }
+
+  get gesturing() {
+    return this.active !== null && this.active.phase !== "settling"
   }
 
   mount() {
@@ -80,14 +88,14 @@ export class CanvasDrag {
     this.doc.addEventListener("keydown", this.keyDown)
     this.doc.addEventListener("phx:update", this.scroll)
     this.host.addEventListener("lostpointercapture", this.lostCapture)
-    this.win.addEventListener("blur", this.cancelBound ||= () => this.cancel())
+    this.win.addEventListener("blur", this.cancelBound ||= () => this.cancel("blur"))
     this.win.addEventListener("scroll", this.scroll, true)
     if (!readGeometry(this.getCanvas()?.dataset)) this.onInvalidGeometry()
   }
 
   destroy() {
     if (!this.mounted) return
-    this.cancel()
+    this.cancel("destroy")
     this.clearClickSuppression()
     this.doc.removeEventListener("pointerdown", this.pointerDown)
     this.doc.removeEventListener("pointermove", this.pointerMove)
@@ -113,13 +121,30 @@ export class CanvasDrag {
   pointerDown(event) {
     // A new pointer gesture cannot inherit a click suppression from the last drag.
     this.clearClickSuppression()
-    if (this.busy || event.isPrimary === false || event.button !== 0 ||
-        !["mouse", "pen", "touch"].includes(event.pointerType)) return
-    const card = editableCard(event.target)
+    const candidate = event.target?.closest?.("[data-metric-id]")
     const canvas = this.getCanvas()
-    if (!card || !canvas?.contains(card)) return
+    if (!candidate || !canvas?.contains(candidate)) return
+    if (this.busy) {
+      canvasDebug.record("drag.start_ignored", {reason: "busy"})
+      return
+    }
+    if (this.isBusy()) {
+      canvasDebug.record("drag.start_ignored", {reason: "another_gesture"})
+      return
+    }
+    if (event.isPrimary === false || event.button !== 0 ||
+        !["mouse", "pen", "touch"].includes(event.pointerType)) {
+      canvasDebug.record("drag.start_ignored", {reason: "unsupported_pointer"})
+      return
+    }
+    const card = editableCard(event.target)
+    if (!card) {
+      canvasDebug.record("drag.start_ignored", {reason: "read_only_card"})
+      return
+    }
     const grid = readGeometry(canvas.dataset)
     if (!grid) {
+      canvasDebug.record("drag.start_ignored", {reason: "invalid_geometry"})
       this.onInvalidGeometry()
       return
     }
@@ -147,22 +172,32 @@ export class CanvasDrag {
       links: this.incidentPaths(canvas, card.dataset.metricId),
       captured: false,
     }
+    canvasDebug.record("drag.start_accepted", {pointerType: event.pointerType})
   }
 
-  pointerMove(event) {
+  pointerMove(event, capture = true) {
     const state = this.active
     if (!state || state.phase === "settling" || event.pointerId !== state.pointerId) return
     if (!this.valid(state)) return
+    if (capture && primaryButtonReleased(event)) {
+      canvasDebug.record("drag.release_recovered", {source: "pointermove"})
+      this.pointerUp(event)
+      return
+    }
     state.clientX = event.clientX
     state.clientY = event.clientY
     if (state.phase === "pending") {
       if (Math.hypot(event.clientX - state.startX, event.clientY - state.startY) < DRAG_THRESHOLD) return
       state.phase = "dragging"
+      canvasDebug.record("drag.threshold_crossed")
       state.card.classList.add("metric-card-dragging")
       // Let the short CSS transform transition soften pointer samples.
       state.card.style.transition = ""
-      this.host.setPointerCapture(state.pointerId)
-      state.captured = true
+      if (capture) {
+        this.host.setPointerCapture(state.pointerId)
+        state.captured = true
+        canvasDebug.record("drag.capture_acquired")
+      }
     }
     event.preventDefault()
     this.scheduleFrame()
@@ -172,8 +207,11 @@ export class CanvasDrag {
     const state = this.active
     if (!state || event.pointerId !== state.pointerId || state.phase === "settling") return
     if (!this.valid(state)) return
+    // A fast gesture may reach the threshold only in its final pointer sample.
+    // Reuse movement handling, but never acquire capture after release.
+    this.pointerMove(event, false)
     if (state.phase === "pending") {
-      this.cancel()
+      this.cancel("below_threshold")
       return
     }
     event.preventDefault()
@@ -185,41 +223,61 @@ export class CanvasDrag {
     this.releaseCapture(state)
     this.layer.style.display = "none"
     const target = state.target
-    if (state.invalid || (target.x === state.source.x && target.y === state.source.y)) {
-      this.cancel()
+    if (state.invalid) {
+      canvasDebug.record("drag.drop_rejected", {reason: "occupied"})
+      this.cancel("rejected_drop")
       return
     }
+    if (target.x === state.source.x && target.y === state.source.y) {
+      canvasDebug.record("drag.drop_unchanged")
+      this.cancel("unchanged_drop")
+      return
+    }
+    canvasDebug.record("drag.drop_committed")
     state.phase = "settling"
     state.card.classList.remove("metric-card-dragging")
     state.card.classList.add("metric-card-settling")
-    const dx = state.grid.padding + target.x * state.grid.step - state.originLeft
-    const dy = state.grid.padding + target.y * state.grid.step - state.originTop
+    const dx = state.grid.padding + (target.x - state.grid.originX) * state.grid.step - state.originLeft
+    const dy = state.grid.padding + (target.y - state.grid.originY) * state.grid.step - state.originTop
     this.transformCard(state, dx, dy)
     this.updateLinks(state)
     try {
       this.onMove(state.card.dataset.metricId, target, () => {
-        if (this.active !== state) return false
-        this.cancel()
+        if (this.active !== state) {
+          canvasDebug.record("drag.move_stale_acknowledgement")
+          return false
+        }
+        canvasDebug.record("drag.move_acknowledged")
+        this.cancel("ack_cleanup")
         return true
       })
     } catch (error) {
-      this.cancel()
+      this.cancel("move_exception")
       throw error
     }
   }
 
   pointerCancel(event) {
-    if (event.pointerId === this.active?.pointerId) this.cancel()
+    if (event.pointerId === this.active?.pointerId) this.cancel("pointercancel")
   }
 
   lostCapture(event) {
-    if (event.pointerId === this.active?.pointerId && this.active.captured) this.cancel()
+    if (event.pointerId === this.active?.pointerId && this.active.captured &&
+        !this.host.hasPointerCapture(event.pointerId)) {
+      canvasDebug.record("drag.capture_lost")
+      if (primaryButtonReleased(event)) {
+        canvasDebug.record("drag.release_recovered", {source: "lostpointercapture"})
+        this.pointerUp(event)
+      } else {
+        this.cancel("capture_lost")
+      }
+    }
   }
 
   keyDown(event) {
     if (event.key === "Escape" && this.active && this.active.phase !== "settling") {
       event.preventDefault()
-      this.cancel()
+      this.cancel("escape")
     }
   }
 
@@ -250,20 +308,22 @@ export class CanvasDrag {
   }
 
   valid(state) {
-    if (this.getCanvas() === state.canvas && state.canvas.contains(state.card) &&
+    const canvas = this.getCanvas()
+    if (canvas === state.canvas && state.canvas.contains(state.card) &&
         state.card.isConnected && readGeometry(state.canvas.dataset)) return true
     if (!readGeometry(this.getCanvas()?.dataset)) this.onInvalidGeometry()
-    this.cancel()
+    const reason = canvas !== state.canvas ? "canvas_removed"
+      : !state.canvas.contains(state.card) || !state.card.isConnected ? "card_removed"
+        : "invalid_geometry"
+    this.cancel(reason)
     return false
   }
 
   update(state) {
-    const {step, padding, maxX, maxY} = state.grid
+    const {step, padding, originX, originY} = state.grid
     const rect = state.canvas.getBoundingClientRect()
-    const left = Math.max(padding, Math.min(padding + maxX * step,
-      state.clientX - rect.left - state.offsetX))
-    const top = Math.max(padding, Math.min(padding + maxY * step,
-      state.clientY - rect.top - state.offsetY))
+    const left = state.clientX - rect.left - state.offsetX
+    const top = state.clientY - rect.top - state.offsetY
     this.transformCard(state, left - state.originLeft, top - state.originTop)
     this.updateLinks(state)
     const target = snapPosition({left, top}, state.grid)
@@ -286,7 +346,7 @@ export class CanvasDrag {
       width: `${state.width}px`,
       height: `${state.height}px`,
     })
-    const previewTransform = `translate3d(${rect.left + padding + target.x * step - bounds.left}px, ${rect.top + padding + target.y * step - bounds.top}px, 0)`
+    const previewTransform = `translate3d(${rect.left + padding + (target.x - originX) * step - bounds.left}px, ${rect.top + padding + (target.y - originY) * step - bounds.top}px, 0)`
     if (this.preview.style.transform !== previewTransform) this.preview.style.transform = previewTransform
     this.preview.dataset.gridX = String(target.x)
     this.preview.dataset.gridY = String(target.y)
@@ -305,39 +365,31 @@ export class CanvasDrag {
   }
 
   updateLinks(state, paths = state.links) {
-    if (paths.length === 0) return
-    const cards = new Map([...state.canvas.querySelectorAll("[data-metric-id]")]
-      .map(card => [card.dataset.metricId, card]))
-    const canvasRect = state.canvas.getBoundingClientRect()
-    const bend = Number(state.canvas.dataset.linkBend)
-    const curve = Number.isFinite(bend) ? bend : 50
-    for (const path of paths) {
-      if (!state.canvas.contains(path)) continue
-      const source = cards.get(path.dataset.sourceId)
-      const target = cards.get(path.dataset.targetId)
-      if (!source || !target) continue
-      const a = source.getBoundingClientRect()
-      const b = target.getBoundingClientRect()
-      const sx = a.right - canvasRect.left
-      const sy = (a.top + a.bottom) / 2 - canvasRect.top
-      const tx = b.left - canvasRect.left
-      const ty = (b.top + b.bottom) / 2 - canvasRect.top
-      const d = `M ${sx} ${sy} C ${sx + curve} ${sy}, ${tx - curve} ${ty}, ${tx} ${ty}`
-      if (path.getAttribute("d") !== d) path.setAttribute("d", d)
-    }
+    updateCanvasLinks(state.canvas, paths)
+  }
+
+  refreshLinks() {
+    const state = this.active
+    if (!state || state.phase === "pending") return
+    state.links = this.incidentPaths(state.canvas, state.card.dataset.metricId)
+    this.updateLinks(state)
   }
 
   releaseCapture(state) {
     if (state.captured) {
       state.captured = false
-      if (this.host.hasPointerCapture(state.pointerId)) this.host.releasePointerCapture(state.pointerId)
+      if (this.host.hasPointerCapture(state.pointerId)) {
+        this.host.releasePointerCapture(state.pointerId)
+        canvasDebug.record("drag.capture_released")
+      }
     }
   }
 
-  cancel() {
+  cancel(reason = "cancelled") {
     this.cancelFrame()
     const state = this.active
     if (!state) return
+    canvasDebug.record(reason === "ack_cleanup" ? "drag.finished" : "drag.cancelled", {reason})
     this.active = null
     // A cancelled drag can still generate a browser click when its pointer is released.
     if (state.phase === "dragging") this.suppressNextClick()
@@ -357,6 +409,7 @@ export class CanvasDrag {
 
   click(event) {
     if (event.detail > 0) {
+      canvasDebug.record("drag.click_suppressed")
       event.preventDefault()
       event.stopImmediatePropagation()
       this.clearClickSuppression()

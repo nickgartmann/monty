@@ -78,6 +78,37 @@ Monty format v2; v1 imports convert older layouts to the nearest dot. Run
 positions and invalidate stale editor saves. The layout migration is one-way:
 back up the database before applying it if you need to return to the old canvas.
 
+#### Canvas diagnostics
+
+After loading the current assets, enable local tracing in the browser console:
+
+```js
+window.montyCanvasDebug.enable()
+```
+
+Filter the console by `[monty:canvas]`. Events include gesture decisions and
+cancellation reasons, pointer capture, drop/acknowledgement, camera coordinates,
+LiveView disconnect/reconnect/patch, and page lifecycle. Entries are snapshots,
+not live references. Raw pointer-move samples are optional because logging them
+can affect timing:
+
+```js
+window.montyCanvasDebug.enable({moves: true})
+```
+
+Tracing is off by default. The opt-in and last 500 entries survive reloads in
+the same tab using session storage, when available. The trace contains no model
+content, form values, model IDs, URLs, or authentication/session payloads, and
+is not sent to a server. In Chrome DevTools, copy the retained sequence with:
+
+```js
+copy(JSON.stringify(window.montyCanvasDebug.events(), null, 2))
+```
+
+Use `window.montyCanvasDebug.clear()` before a reproduction, `.dump()` to view the
+buffer, and `.disable()` when finished. Disabling stops recording; clearing
+removes the retained entries.
+
 ### Estimate syntax
 
 | Input | Interpretation |

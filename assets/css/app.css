@@ -65,14 +65,23 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .form-input-error { border-color: #fda4af; }
 .phx-submit-loading .button-primary { opacity: .65; pointer-events: none; }
 .model-workspace { display: grid; grid-template-columns: minmax(0,1fr) 340px; min-height: calc(100vh - 212px); }
-.canvas-scroll { overflow: auto; background-color: #f5f8f5; }
-.canvas-surface {
+.canvas-scroll {
+  position: relative; overflow: clip; min-height: 560px; background-color: #f5f8f5;
+  cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
   background-image: radial-gradient(#cddbd3 1px, transparent 1px);
   background-size: var(--canvas-grid-step, 20px) var(--canvas-grid-step, 20px);
-  background-position: var(--canvas-dot-offset, 2px) var(--canvas-dot-offset, 2px);
+  background-position: calc(var(--canvas-pan-x, 0px) + var(--canvas-dot-offset, 2px)) calc(var(--canvas-pan-y, 0px) + var(--canvas-dot-offset, 2px));
 }
+.canvas-panning, .canvas-panning * { cursor: grabbing !important; }
+.canvas-surface {
+  position: absolute; inset: 0; overflow: visible;
+  transform: translate(var(--canvas-pan-x, 0px), var(--canvas-pan-y, 0px));
+}
+.canvas-connections { overflow: visible; }
 .metric-card {
   position: absolute; width: var(--metric-width, 240px); height: var(--metric-height, 120px); text-align: left; border: 1px solid #dce6df;
+  left: calc(var(--metric-left) - var(--canvas-origin-x, 0px));
+  top: calc(var(--metric-top) - var(--canvas-origin-y, 0px));
   border-radius: 10px; background: #fff; padding: 10px 12px; box-shadow: 0 3px 8px #123a2007;
   transition: border-color .15s, box-shadow .15s;
 }

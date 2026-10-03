@@ -8,8 +8,6 @@ defmodule Monty.CanvasTest do
     assert Canvas.padding() == 32
     assert Canvas.card_width() == 240
     assert Canvas.card_height() == 120
-    assert Canvas.max_x() == 200
-    assert Canvas.max_y() == 1200
 
     for x <- 0..11, y <- 0..99 do
       {fine_x, fine_y} = Canvas.from_legacy_position(x, y)
@@ -28,13 +26,11 @@ defmodule Monty.CanvasTest do
     assert row * Canvas.grid_step() == Canvas.card_height() + 40
   end
 
-  test "size includes cards and padding without shrinking the initial canvas" do
-    assert Canvas.size([]) == {904, 736}
-    assert Canvas.size([%{"x" => 0, "y" => 0}]) == {904, 736}
-    assert Canvas.size([%{"x" => 200, "y" => 1200}]) == {4304, 24_184}
+  test "pixel positions use the same grid for signed coordinates" do
+    assert Canvas.pixel_position(%{"x" => -3, "y" => -4}) == {-28, -48}
   end
 
-  test "free positions use the next non-overlapping default slot within the bounds" do
+  test "free positions use the next non-overlapping default slot in row-major order" do
     assert Canvas.free_position([]) == {0, 0}
     assert Canvas.free_position([%{"x" => 0, "y" => 0}]) == {14, 0}
 
@@ -47,8 +43,9 @@ defmodule Monty.CanvasTest do
     assert Canvas.free_position([%{"x" => 3, "y" => 0}]) == {28, 0}
 
     metrics = for i <- 0..99, do: %{"x" => Enum.at([0, 14, 28], rem(i, 3)), "y" => div(i, 3) * 8}
-    {x, y} = Canvas.free_position(metrics)
-    assert x in 0..Canvas.max_x()
-    assert y in 0..Canvas.max_y()
+    assert Canvas.free_position(metrics) == {14, 264}
+
+    occupied = for row <- 0..150, x <- [0, 14, 28], do: %{"x" => x, "y" => row * 8}
+    assert Canvas.free_position(occupied) == {0, 1208}
   end
 end
