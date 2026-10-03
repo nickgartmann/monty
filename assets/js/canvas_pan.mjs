@@ -98,7 +98,7 @@ export class CanvasPan {
     const pane = this.pane
     if (!pane?.contains(event.target)) return
     // Every card, including read-only cards, keeps its own click interaction.
-    if (event.target.closest("[data-metric-id], a, button, input, textarea, select")) {
+    if (event.target.closest("[data-metric-id], a, button, form, input, textarea, select, label, [contenteditable]")) {
       canvasDebug.record("pan.start_ignored", {reason: "interactive_target"})
       return
     }

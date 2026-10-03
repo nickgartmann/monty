@@ -2,13 +2,19 @@
 // pointer gestures, downloads, and an asset-compatibility notice. Persisted card
 // positions and content remain server-owned.
 import {centeredPosition, readGeometry} from "./canvas_geometry.mjs"
-import {CanvasDrag} from "./canvas_drag.mjs"
+import {CanvasDrag, isCardControl} from "./canvas_drag.mjs"
 import {CanvasPan} from "./canvas_pan.mjs"
 import {canvasDebug} from "./canvas_debug.mjs"
 
 export const ModelInteractions = {
   mounted() {
     const canvas = () => document.getElementById(this.el.dataset.canvasId)
+    const focusMetricField = id => {
+      if (id !== "metric_name" && id !== "metric_input") return
+      const field = document.getElementById(id)
+      field?.focus({preventScroll: true})
+      field?.select()
+    }
     this.canvasConnection = "connected"
     this.stopCanvasDebug = canvasDebug.attach({
       host: this.el, getCanvas: canvas, getState: () => this.canvasDebugState(),
@@ -62,19 +68,21 @@ export const ModelInteractions = {
         if (!this.el.isConnected) return
         const selected = document.getElementById("metric-id")?.value
         if (!selected || selected === previousSelection) return
-        const name = document.getElementById("metric_name")
-        const bounds = name?.getBoundingClientRect()
-        if (bounds && bounds.top >= 0 && bounds.bottom <= window.innerHeight) {
-          name.focus({preventScroll: true})
-          name.select()
-        }
+        focusMetricField("metric_name")
       })
     }
     this.keydown = event => {
       if (this.canvasDrag.busy || this.canvasPan.busy) return
-      const card = event.target.closest("[data-metric-id][data-movable=true], [data-metric-id][draggable=true]")
+      const card = event.target.closest("[data-metric-id]")
       const element = canvas()
       if (!card || !element?.contains(card) || event.altKey || event.ctrlKey || event.metaKey) return
+      if (event.target === card && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault()
+        this.pushEvent("select", {id: card.dataset.metricId})
+        return
+      }
+      if ((card.dataset.movable !== "true" && card.getAttribute("draggable") !== "true") ||
+          isCardControl(event.target, card)) return
       const directions = {ArrowLeft: [-1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowRight: [1, 0]}
       const direction = directions[event.key]
       if (!direction) return
@@ -93,6 +101,7 @@ export const ModelInteractions = {
     }
     document.addEventListener("dblclick", this.dblclick)
     document.addEventListener("keydown", this.keydown)
+    this.handleEvent("focus-metric-field", ({id}) => focusMetricField(id))
     this.handleEvent("download-model", ({name, content}) => {
       const url = URL.createObjectURL(new Blob([content], {type: "application/json"}))
       const link = document.createElement("a")

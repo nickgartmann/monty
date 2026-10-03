@@ -64,7 +64,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .form-input::placeholder { color: #9aaba6; }
 .form-input-error { border-color: #fda4af; }
 .phx-submit-loading .button-primary { opacity: .65; pointer-events: none; }
-.model-workspace { display: grid; grid-template-columns: minmax(0,1fr) 340px; min-height: calc(100vh - 212px); }
+.model-workspace { display: grid; grid-template-columns: minmax(0,1fr); min-height: calc(100vh - 212px); }
 .canvas-scroll {
   position: relative; overflow: clip; min-height: 560px; background-color: #f5f8f5;
   cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
@@ -85,8 +85,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   border-radius: 10px; background: #fff; padding: 10px 12px; box-shadow: 0 3px 8px #123a2007;
   transition: border-color .15s, box-shadow .15s;
 }
-.metric-card:hover { border-color: #9ebfb0; box-shadow: 0 5px 16px #123a2010; }
-.metric-card-selected { border-color: #0d9488; box-shadow: 0 0 0 2px #0d948821, 0 5px 16px #123a2010; }
+.metric-card:hover { z-index: 11; border-color: #9ebfb0; box-shadow: 0 5px 16px #123a2010; }
+.metric-card-selected { z-index: 10; border-color: #0d9488; box-shadow: 0 0 0 2px #0d948821, 0 5px 16px #123a2010; }
 .metric-card-error { border-color: #fda4af; }
 .metric-card[data-movable=true], .metric-card[draggable=true] {
   cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
@@ -107,20 +107,55 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .canvas-drop-preview[data-invalid=true] {
   background: #e11d4812; box-shadow: 0 6px 20px #e11d4820;
 }
-.metric-detail { border-left: 1px solid #e0e8e2; background: #fff; padding: 26px 24px; }
+.metric-inline-field .form-field { margin: 0; }
+.metric-inline-field .form-field > p { display: none; }
+.metric-inline-input {
+  display: block; width: 100%; min-width: 0; height: 16px; padding: 0; border: none; border-radius: 2px;
+  background: transparent; color: #475569; text-overflow: ellipsis; cursor: text;
+  user-select: text; -webkit-user-select: text; transition: background .15s, box-shadow .15s;
+}
+.metric-name-input { font-size: 12px; font-weight: 600; line-height: 16px; }
+.metric-formula-input { font-family: monospace; font-size: 10px; line-height: 16px; color: #64748b; }
+.metric-inline-input:not([readonly]):hover, .metric-edit-trigger:hover { background: #f0fdfa; color: #0f766e; }
+.metric-inline-input:focus { outline: none; background: #f0fdfa; box-shadow: 0 0 0 3px #0d948826; }
+.metric-validation {
+  position: absolute; left: 0; right: 0; top: calc(100% + 6px); padding: 8px 10px;
+  border: 1px solid #fecdd3; border-radius: 8px; background: #fff1f2; color: #be123c;
+  font-size: 11px; line-height: 1.5; box-shadow: 0 3px 8px #123a2007;
+}
+.metric-distribution { position: relative; flex-shrink: 0; width: 42px; height: 18px; }
+.metric-distribution .form-field { margin: 0; }
+.metric-distribution-select {
+  appearance: none; display: block; width: 42px; height: 18px; padding: 0; border: 1px solid #dce6df;
+  border-radius: 4px; background: transparent; color: transparent; font-size: 11px; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.metric-distribution-select:hover, .metric-distribution-select:focus { border-color: #0d9488; background: #0d948808; }
+.metric-distribution-select option { color: #334155; background: #fff; }
+.distribution-icon { display: block; width: 22px; height: 16px; color: #0f766e; }
+.metric-distribution > .distribution-icon { position: absolute; left: 4px; top: 1px; pointer-events: none; }
+.distribution-chevron { position: absolute; right: 3px; top: 4px; color: #78908b; pointer-events: none; }
+.metric-distribution-preview { flex-shrink: 0; }
+.metric-note { position: relative; display: flex; }
+.metric-note-button {
+  display: flex; align-items: center; justify-content: center; width: 18px; height: 18px;
+  color: #78908b; border-radius: 4px; opacity: 0; transition: opacity .15s, background .15s, color .15s;
+}
+.metric-card:hover .metric-note-button, .metric-card:focus-within .metric-note-button { opacity: 1; }
+.metric-note-button:hover, .metric-note-button:focus-visible { background: #f0fdfa; color: #0f766e; }
+.metric-note-tooltip {
+  position: absolute; right: -26px; top: calc(100% + 8px); z-index: 40;
+  width: 216px; max-height: 180px; overflow: auto; padding: 10px 12px; border-radius: 8px;
+  background: #213d38; color: #fff; font-size: 11px; line-height: 1.6; font-weight: 400;
+  overflow-wrap: anywhere; box-shadow: 0 6px 18px #123a2026;
+  opacity: 0; visibility: hidden; transition: opacity .15s, visibility .15s;
+}
+.metric-note:hover .metric-note-tooltip, .metric-note:focus-within .metric-note-tooltip { opacity: 1; visibility: visible; }
+@media (hover: none) { .metric-note-button { opacity: 1; } }
 .histogram { display: flex; align-items: end; gap: 2px; height: 20px; width: 100%; }
 .histogram span { flex: 1; min-width: 1px; background: #67b5a0; border-radius: 2px 2px 0 0; }
-.histogram-lg { height: 110px; gap: 3px; }
-.histogram-lg span { background: #0d9488; }
 .dependency-path { fill: none; stroke: #a7c7b8; stroke-width: 1.6px; }
-.stat-label { font-size: 10px; color: #84968f; letter-spacing: .08em; text-transform: uppercase; }
-.stat-value { margin-top: 4px; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
-@media (min-width: 1600px) { .model-workspace { grid-template-columns: minmax(0,1fr) 380px; } }
-@media (max-width: 1000px) {
-  .model-workspace { grid-template-columns: minmax(0,1fr) 300px; }
-  .metric-detail { padding: 24px 18px; }
-}
 @media (max-width: 760px) {
   .app-header { min-height: 66px; padding: 12px 16px; }
   .nav-link { padding: 7px; font-size: 12px; }
@@ -128,6 +163,5 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .page-shell { padding-inline: 18px; }
   .model-workspace { display: flex; flex-direction: column; }
   .canvas-scroll { max-height: 65vh; min-height: 420px; }
-  .metric-detail { border-left: none; border-top: 1px solid #e0e8e2; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }

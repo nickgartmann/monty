@@ -42,6 +42,14 @@ defmodule Monty.Simulation do
   @max_float 1.7976931348623157e308
   @key ~r/\A[A-Za-z_][A-Za-z0-9_]*\z/
 
+  @doc "Whether an input is a numeric range with increasing bounds."
+  def range_input?(input) do
+    case Parser.parse(input) do
+      {:ok, {:interval, _, _} = definition, []} -> valid_definition(definition, :normal) == :ok
+      _ -> false
+    end
+  end
+
   @spec run([map()], keyword()) :: map()
   def run(metrics, opts \\ [])
 

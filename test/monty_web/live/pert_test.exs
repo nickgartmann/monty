@@ -11,15 +11,15 @@ defmodule MontyWeb.PertTest do
 
     view |> form("#metric-form", metric: %{input: "=pert(10, 20, 30)"}) |> render_change()
     refute has_element?(view, "#metric-error")
-    assert has_element?(view, "#metric-statistics")
-    assert has_element?(view, "#stat-median")
+    assert has_element?(view, "#metrics [data-metric-summary]")
+    refute has_element?(view, "#metric_distribution")
+    refute has_element?(view, "#metric-statistics")
 
     view |> form("#metric-form", metric: %{input: "=pert(10, 31, 30)"}) |> render_change()
     assert has_element?(view, "#metric-error")
 
     view |> form("#metric-form", metric: %{input: "=pert(-20%, 0%, 30%)"}) |> render_change()
     refute has_element?(view, "#metric-error")
-    assert has_element?(view, "#metric-statistics")
-    assert has_element?(view, "#stat-median")
+    assert has_element?(view, "#metrics [data-metric-summary]")
   end
 end

@@ -11,19 +11,19 @@ defmodule MontyWeb.ModelLiveTest do
     {:ok, view, _} = live(conn, ~p"/try")
     assert has_element?(view, "#model-canvas")
     assert has_element?(view, "#canvas-viewport[style*='--metric-height: 120px;']")
-    assert has_element?(view, "#metrics button", "Cash in the bank")
+    assert has_element?(view, "#metrics #metric_name[value='Cash in the bank']")
     assert has_element?(view, "#metrics [data-metric-summary]", "450.0k")
-    assert has_element?(view, "#metrics [data-metric-input]", "450000")
+    assert has_element?(view, "#metrics #metric_input[value='450000']")
     refute has_element?(view, "#metrics button span", "mean")
-    assert has_element?(view, "#metric-statistics")
+    refute has_element?(view, "#metric-detail")
+    refute has_element?(view, "#metric-statistics")
     assert has_element?(view, "#duplicate-model")
     refute has_element?(view, "#save-model")
     refute has_element?(view, "#model-settings")
 
     view |> form("#metric-form", metric: %{name: "Savings", input: "100"}) |> render_change()
-    assert has_element?(view, "#stat-median", "100.0")
     assert has_element?(view, "#metrics [data-metric-summary]", "100.0")
-    assert has_element?(view, "#metrics button", "Savings")
+    assert has_element?(view, "#metrics #metric_name[value='Savings']")
     view |> element("#formula-help") |> render_click()
     assert has_element?(view, "#formula-guide")
   end
@@ -31,10 +31,10 @@ defmodule MontyWeb.ModelLiveTest do
   test "invalid formulas are visible and do not kill the editor", %{conn: conn} do
     {:ok, view, _} = live(conn, ~p"/try")
     view |> form("#metric-form", metric: %{input: "=UNKNOWN + 1"}) |> render_change()
-    assert has_element?(view, "#metric-error")
+    assert has_element?(view, "#metrics > [data-selected=true] #metric-error")
     view |> form("#metric-form", metric: %{input: "12 to 24"}) |> render_change()
     refute has_element?(view, "#metric-error")
-    assert has_element?(view, "#metric-statistics")
+    assert has_element?(view, "#metrics [data-metric-summary]")
   end
 
   test "public viewers cannot mutate using forged events", %{conn: conn} do
@@ -45,8 +45,8 @@ defmodule MontyWeb.ModelLiveTest do
     refute has_element?(view, "#add-metric")
     refute has_element?(view, "#save-model")
     assert has_element?(view, "#metric_name[readonly]")
-    assert has_element?(view, "#metrics button[draggable=false]")
-    assert has_element?(view, "#metrics button[data-movable=false]")
+    assert has_element?(view, "#metrics > [draggable=false]")
+    assert has_element?(view, "#metrics > [data-movable=false]")
     assert has_element?(view, "#model-canvas[data-editable=false]")
     render_click(view, "add-metric")
     render_click(view, "add-metric", %{"x" => 10, "y" => 12})
@@ -96,7 +96,7 @@ defmodule MontyWeb.ModelLiveTest do
 
       {:ok, reopened, _} = live(conn, ~p"/models/#{model.id}")
       assert has_element?(reopened, "#metric_name[value='Updated assumption']")
-      assert has_element?(reopened, "#stat-median", "42.0")
+      assert has_element?(reopened, "#metrics [data-metric-summary]", "42.0")
     end
 
     test "distribution formulas preview, save, reopen, and recover from invalid parameters", %{
@@ -106,24 +106,24 @@ defmodule MontyWeb.ModelLiveTest do
       {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
       view |> element("#formula-help") |> render_click()
       assert has_element?(view, "#distribution-guide")
-      assert has_element?(view, "#range-distribution-help")
+      refute has_element?(view, "#range-distribution-help")
 
       view
       |> form("#metric-form", metric: %{input: "=normal(42, 0)"})
       |> render_submit()
 
       refute has_element?(view, "#metric-error")
-      assert has_element?(view, "#stat-median", "42.0")
+      assert has_element?(view, "#metrics [data-metric-summary]", "42.0")
       assert hd(Repo.reload!(model).metrics)["input"] == "=normal(42, 0)"
 
       {:ok, reopened, _} = live(conn, ~p"/models/#{model.id}")
       assert has_element?(reopened, "#metric_input[value='=normal(42, 0)']")
-      assert has_element?(reopened, "#stat-median", "42.0")
+      assert has_element?(reopened, "#metrics [data-metric-summary]", "42.0")
       reopened |> form("#metric-form", metric: %{input: "=uniform(20, 10)"}) |> render_change()
       assert has_element?(reopened, "#metric-error")
       reopened |> form("#metric-form", metric: %{input: "=uniform(10, 20)"}) |> render_change()
       refute has_element?(reopened, "#metric-error")
-      assert has_element?(reopened, "#metric-statistics")
+      assert has_element?(reopened, "#metrics [data-metric-summary]")
     end
 
     test "adds, moves, undoes, and removes metrics", %{conn: conn, model: model} do
@@ -131,18 +131,20 @@ defmodule MontyWeb.ModelLiveTest do
 
       assert has_element?(
                view,
-               "#metrics button[data-movable=true][draggable=false][aria-pressed=true]"
+               "#metrics > [data-movable=true][draggable=false][data-selected=true]"
              )
 
       view |> element("#add-metric") |> render_click()
-      assert has_element?(view, "#metrics button", "New metric")
-      view |> element("#move-down") |> render_click()
+      assert has_element?(view, "#metric_name[value='New metric']")
+      view |> element("#save-model") |> render_click()
+      new_id = List.last(Repo.reload!(model).metrics)["id"]
+      render_click(view, "move-metric", %{"id" => new_id, "x" => 14, "y" => 1})
       view |> element("#save-model") |> render_click()
       assert [%{"key" => "A"}, %{"key" => "B", "x" => 14, "y" => 1}] = Repo.reload!(model).metrics
-      view |> element("#delete-metric") |> render_click()
-      refute has_element?(view, "#metrics button", "New metric")
+      render_click(view, "delete-metric", %{"id" => new_id})
+      refute has_element?(view, "#metric_name[value='New metric']")
       view |> element("#undo") |> render_click()
-      assert has_element?(view, "#metrics button", "New metric")
+      assert has_element?(view, "#metric-name-#{new_id}", "New metric")
     end
 
     test "adds at an explicit canvas position and selects the new metric for editing", %{
@@ -160,8 +162,7 @@ defmodule MontyWeb.ModelLiveTest do
 
       assert has_element?(
                view,
-               "#metrics button[aria-pressed=true][data-grid-x='15'][data-grid-y='14']",
-               "New metric"
+               "#metrics > [data-selected=true][data-grid-x='15'][data-grid-y='14'] #metric_name[value='New metric']"
              )
 
       assert has_element?(view, "#metric_name[value='New metric']")
@@ -172,17 +173,17 @@ defmodule MontyWeb.ModelLiveTest do
                Repo.reload!(model).metrics
 
       {:ok, reopened, _} = live(conn, ~p"/models/#{model.id}")
-      assert has_element?(reopened, "#metrics button[data-grid-x='15'][data-grid-y='14']")
+      assert has_element?(reopened, "#metrics > [data-grid-x='15'][data-grid-y='14']")
     end
 
     test "adds and saves signed positions beyond former limits", %{conn: conn, model: model} do
       {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
 
       render_click(view, "add-metric", %{"x" => "-201", "y" => "1201"})
-      assert has_element?(view, "#metrics button[data-grid-x='-201'][data-grid-y='1201']")
+      assert has_element?(view, "#metrics > [data-grid-x='-201'][data-grid-y='1201']")
 
       render_click(view, "add-metric", %{"x" => 201, "y" => -1201})
-      assert has_element?(view, "#metrics button[data-grid-x='201'][data-grid-y='-1201']")
+      assert has_element?(view, "#metrics > [data-grid-x='201'][data-grid-y='-1201']")
 
       view |> element("#save-model") |> render_click()
 
@@ -196,9 +197,9 @@ defmodule MontyWeb.ModelLiveTest do
     test "undo removes a newly placed metric", %{conn: conn, model: model} do
       {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
       render_click(view, "add-metric", %{"x" => 15, "y" => 14})
-      assert has_element?(view, "#metrics button[data-grid-x='15'][data-grid-y='14']")
+      assert has_element?(view, "#metrics > [data-grid-x='15'][data-grid-y='14']")
       view |> element("#undo") |> render_click()
-      refute has_element?(view, "#metrics button[data-grid-x='15'][data-grid-y='14']")
+      refute has_element?(view, "#metrics > [data-grid-x='15'][data-grid-y='14']")
       view |> element("#save-model") |> render_click()
       assert Repo.reload!(model).metrics == model.metrics
     end
@@ -221,7 +222,7 @@ defmodule MontyWeb.ModelLiveTest do
         render_click(view, "add-metric", params)
         assert has_element?(view, "#flash-error", "valid grid point")
         assert has_element?(view, "#save-status", "All changes saved")
-        refute has_element?(view, "#metrics button", "New metric")
+        refute has_element?(view, "#metric_name[value='New metric']")
       end
 
       assert Repo.reload!(model).metrics == model.metrics
@@ -239,8 +240,8 @@ defmodule MontyWeb.ModelLiveTest do
       {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
       render_click(view, "add-metric", %{"x" => 150, "y" => 600})
       assert has_element?(view, "#flash-error", "cannot add more")
-      assert has_element?(view, "#metrics > button:nth-child(100)")
-      refute has_element?(view, "#metrics > button:nth-child(101)")
+      assert has_element?(view, "#metrics > [data-metric-id]:nth-child(100)")
+      refute has_element?(view, "#metrics > [data-metric-id]:nth-child(101)")
       assert Repo.reload!(model).metrics == metrics
     end
 
@@ -287,16 +288,16 @@ defmodule MontyWeb.ModelLiveTest do
       assert has_element?(reopened, "#metrics-#{c["id"]}[data-grid-y='6'][style*='top: 152px;']")
     end
 
-    test "position controls nudge by one dot and undo restores that exact position", %{
+    test "moves by one dot and undo restores that exact position", %{
       conn: conn,
       model: model
     } do
       {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
       id = hd(model.metrics)["id"]
       assert has_element?(view, "#metrics-#{id}[style*='left: 32px;']")
-      view |> element("#move-right") |> render_click()
+      render_click(view, "move-metric", %{"id" => id, "x" => 1, "y" => 0})
       assert has_element?(view, "#metrics-#{id}[data-grid-x='1'][style*='left: 52px;']")
-      view |> element("#move-down") |> render_click()
+      render_click(view, "move-metric", %{"id" => id, "x" => 1, "y" => 1})
       assert has_element?(view, "#metrics-#{id}[data-grid-y='1'][style*='top: 52px;']")
       view |> element("#undo") |> render_click()
       assert has_element?(view, "#metrics-#{id}[data-grid-y='0'][style*='top: 32px;']")
@@ -304,15 +305,15 @@ defmodule MontyWeb.ModelLiveTest do
       assert [%{"x" => 1, "y" => 0}] = Repo.reload!(model).metrics
     end
 
-    test "position controls and moves cross zero and accept unbounded integer coordinates", %{
+    test "moves cross zero and accept unbounded integer coordinates", %{
       conn: conn,
       model: model
     } do
       {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
       id = hd(model.metrics)["id"]
 
-      view |> element("#move-left") |> render_click()
-      view |> element("#move-up") |> render_click()
+      render_click(view, "move-metric", %{"id" => id, "x" => -1, "y" => 0})
+      render_click(view, "move-metric", %{"id" => id, "x" => -1, "y" => -1})
       assert has_element?(view, "#metrics-#{id}[data-grid-x='-1'][data-grid-y='-1']")
 
       render_click(view, "move-metric", %{"id" => id, "x" => "201", "y" => "-1201"})
@@ -349,7 +350,7 @@ defmodule MontyWeb.ModelLiveTest do
 
     test "deleting the last metric can be saved and reopened", %{conn: conn, model: model} do
       {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
-      view |> element("#delete-metric") |> render_click()
+      render_click(view, "delete-metric", %{"id" => hd(model.metrics)["id"]})
       assert has_element?(view, "#empty-canvas")
       view |> element("#save-model") |> render_click()
       assert Repo.reload!(model).metrics == []
@@ -394,8 +395,9 @@ defmodule MontyWeb.ModelLiveTest do
       b = metric_fixture(%{"key" => "B", "input" => "=A * 2", "x" => 1})
       model = model_fixture(scope, %{metrics: [a, b]})
       {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
-      view |> element("#delete-metric") |> render_click()
-      assert has_element?(view, "#metric-error")
+      render_click(view, "delete-metric", %{"id" => a["id"]})
+      view |> element("#metrics-#{b["id"]}") |> render_click()
+      assert has_element?(view, "#metrics-#{b["id"]} #metric-error")
       view |> element("#add-metric") |> render_click()
       view |> element("#save-model") |> render_click()
       assert [%{"key" => "B"}, %{"key" => "C"}] = Repo.reload!(model).metrics
@@ -421,7 +423,9 @@ defmodule MontyWeb.ModelLiveTest do
       metric = metric_fixture(%{"notes" => "An assumption to remove"})
       model = model_fixture(scope, %{metrics: [metric]})
       {:ok, view, _} = live(conn, ~p"/models/#{model.id}")
-      view |> form("#metric-form", metric: %{notes: ""}) |> render_submit()
+      view |> element("#metric-note-#{metric["id"]}") |> render_click()
+      view |> form("#note-form", note: %{notes: ""}) |> render_submit()
+      view |> element("#save-model") |> render_click()
       assert hd(Repo.reload!(model).metrics)["notes"] in [nil, ""]
     end
 

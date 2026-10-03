@@ -12,6 +12,12 @@ function editableCard(target) {
     : null
 }
 
+// Card surfaces move, but controls embedded in them own their pointer and keys.
+export function isCardControl(target, card) {
+  const control = target?.closest?.("a, button, input, select, textarea, label, [contenteditable], [data-card-controls]")
+  return !!control && control !== card && card.contains(control)
+}
+
 function visibleBounds(rect, viewport) {
   const left = Math.max(0, rect.left)
   const top = Math.max(0, rect.top)
@@ -115,7 +121,7 @@ export class CanvasDrag {
 
   dragStart(event) {
     const card = editableCard(event.target)
-    if (card && this.getCanvas()?.contains(card)) event.preventDefault()
+    if (card && this.getCanvas()?.contains(card) && !isCardControl(event.target, card)) event.preventDefault()
   }
 
   pointerDown(event) {
@@ -124,6 +130,10 @@ export class CanvasDrag {
     const candidate = event.target?.closest?.("[data-metric-id]")
     const canvas = this.getCanvas()
     if (!candidate || !canvas?.contains(candidate)) return
+    if (isCardControl(event.target, candidate)) {
+      canvasDebug.record("drag.start_ignored", {reason: "interactive_target"})
+      return
+    }
     if (this.busy) {
       canvasDebug.record("drag.start_ignored", {reason: "busy"})
       return

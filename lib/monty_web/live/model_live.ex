@@ -15,6 +15,8 @@ defmodule MontyWeb.ModelLive do
         dirty?: false,
         show_settings?: false,
         show_help?: false,
+        note_metric: nil,
+        note_form: nil,
         history: [],
         samples: @samples
       )
@@ -52,9 +54,94 @@ defmodule MontyWeb.ModelLive do
 
   @impl true
   def handle_event("select", %{"id" => id}, socket) do
+    if id == socket.assigns.selected_id do
+      {:noreply, socket}
+    else
+      case Enum.find(socket.assigns.model.metrics, &(&1["id"] == id)) do
+        nil -> {:noreply, socket}
+        metric -> {:noreply, socket |> select_metric(metric) |> restream()}
+      end
+    end
+  end
+
+  def handle_event("begin-edit", %{"id" => id, "field" => field}, socket)
+      when field in ~w(name input) do
     case Enum.find(socket.assigns.model.metrics, &(&1["id"] == id)) do
-      nil -> {:noreply, socket}
-      metric -> {:noreply, socket |> select_metric(metric) |> restream()}
+      nil ->
+        {:noreply, socket}
+
+      metric ->
+        {:noreply,
+         socket
+         |> select_metric(metric)
+         |> restream()
+         |> push_event("focus-metric-field", %{id: "metric_#{field}"})}
+    end
+  end
+
+  def handle_event("open-note", %{"id" => id}, socket) do
+    case Enum.find(socket.assigns.model.metrics, &(&1["id"] == id)) do
+      nil ->
+        {:noreply, socket}
+
+      metric ->
+        {:noreply,
+         assign(socket,
+           note_metric: metric,
+           note_form: to_form(metric_changeset(%{}, metric), as: :note)
+         )}
+    end
+  end
+
+  def handle_event("close-note", _, socket),
+    do: {:noreply, assign(socket, note_metric: nil, note_form: nil)}
+
+  def handle_event("validate-note", %{"note" => params}, socket) do
+    if socket.assigns.editable? && socket.assigns.note_metric do
+      changeset =
+        metric_changeset(Map.take(params, ["notes"]), socket.assigns.note_metric)
+        |> Map.put(:action, :validate)
+
+      {:noreply, assign(socket, :note_form, to_form(changeset, as: :note))}
+    else
+      {:noreply, denied(socket)}
+    end
+  end
+
+  def handle_event("save-note", %{"note" => params}, socket) do
+    note_metric = socket.assigns.note_metric
+
+    metric =
+      note_metric && Enum.find(socket.assigns.model.metrics, &(&1["id"] == note_metric["id"]))
+
+    if socket.assigns.editable? && metric do
+      changeset =
+        metric_changeset(Map.take(params, ["notes"]), metric)
+        |> Map.put(:action, :validate)
+
+      if changeset.valid? do
+        updated = Map.put(metric, "notes", Ecto.Changeset.get_field(changeset, :notes) || "")
+
+        metrics =
+          Enum.map(
+            socket.assigns.model.metrics,
+            &if(&1["id"] == updated["id"], do: updated, else: &1)
+          )
+
+        metric_form = socket.assigns.metric_form
+
+        {:noreply,
+         socket
+         |> remember()
+         |> draft(metrics)
+         |> refresh_selection()
+         |> assign(metric_form: metric_form, note_metric: nil, note_form: nil)
+         |> restream()}
+      else
+        {:noreply, assign(socket, :note_form, to_form(changeset, as: :note))}
+      end
+    else
+      {:noreply, denied(socket)}
     end
   end
 
@@ -241,7 +328,9 @@ defmodule MontyWeb.ModelLive do
       else
         socket =
           if metric["id"] == socket.assigns.selected_id do
-            assign(socket, dirty?: true, metric_form: to_form(changeset, as: :metric))
+            socket
+            |> assign(dirty?: true, metric_form: to_form(changeset, as: :metric))
+            |> restream()
           else
             socket
           end
@@ -366,14 +455,12 @@ defmodule MontyWeb.ModelLive do
   end
 
   defp select_metric(socket, nil) do
-    assign(socket, selected: nil, selected_id: nil, selected_result: nil, metric_form: nil)
+    assign(socket, selected_id: nil, metric_form: nil)
   end
 
   defp select_metric(socket, metric) do
     assign(socket,
-      selected: metric,
       selected_id: metric["id"],
-      selected_result: Map.get(socket.assigns.results, metric["key"]),
       metric_form: to_form(metric_changeset(%{}, metric), as: :metric)
     )
   end
@@ -483,7 +570,6 @@ defmodule MontyWeb.ModelLive do
   defp format_value(value), do: value |> Kernel.*(1.0) |> Float.round(2) |> Float.to_string()
 
   attr :result, :map, required: true
-  attr :large, :boolean, default: false
 
   defp histogram(assigns) do
     bins = Map.get(assigns.result, :histogram, [])
@@ -492,11 +578,185 @@ defmodule MontyWeb.ModelLive do
 
     ~H"""
     <div
-      class={["histogram", @large && "histogram-lg"]}
+      class="histogram"
       aria-label="Simulated value distribution"
       role="img"
     >
       <span :for={height <- @bars} style={"height: #{height}%"}></span>
+    </div>
+    """
+  end
+
+  attr :type, :string, required: true
+
+  defp distribution_icon(assigns) do
+    ~H"""
+    <svg
+      data-distribution={@type}
+      viewBox="0 0 24 18"
+      class="distribution-icon"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      role="img"
+      aria-label={"#{String.capitalize(@type)} distribution"}
+    >
+      <path d="M2 15.5h20" opacity=".35" />
+      <%= case @type do %>
+        <% "normal" -> %>
+          <path d="M2 14.5C6 14.5 7 3 12 3s6 11.5 10 11.5" />
+        <% "lognormal" -> %>
+          <path d="M2 14.5C3 14.5 3.5 3 6.5 3S10 13.5 22 14.5" />
+        <% "uniform" -> %>
+          <path d="M2 14.5h3V4h14v10.5h3" />
+      <% end %>
+    </svg>
+    """
+  end
+
+  attr :card, :map, required: true
+  attr :form, :any, default: nil
+  attr :editable?, :boolean, required: true
+
+  defp metric_face(assigns) do
+    input = if assigns.form, do: assigns.form[:input].value, else: assigns.card.metric["input"]
+
+    distribution =
+      if assigns.form,
+        do: assigns.form[:distribution].value,
+        else: assigns.card.metric["distribution"]
+
+    distribution =
+      if distribution in ~w(normal lognormal uniform),
+        do: distribution,
+        else: assigns.card.metric["distribution"]
+
+    assigns = assign(assigns, range?: Simulation.range_input?(input), distribution: distribution)
+
+    ~H"""
+    <div class="mb-0.5 flex items-center justify-between gap-2">
+      <div :if={@form} class="metric-inline-field min-w-0 flex-1">
+        <.input
+          field={@form[:name]}
+          class="metric-inline-input metric-name-input"
+          aria-label="Metric name"
+          maxlength="120"
+          required
+          readonly={!@editable?}
+        />
+      </div>
+      <button
+        :if={!@form}
+        id={"metric-name-#{@card.id}"}
+        type="button"
+        phx-click="begin-edit"
+        phx-value-id={@card.id}
+        phx-value-field="name"
+        class="metric-edit-trigger min-w-0 truncate text-xs font-semibold leading-4 text-slate-600"
+        aria-label={"#{if(@editable?, do: "Edit", else: "View")} name of #{@card.metric["name"]}"}
+      >{@card.metric["name"]}</button>
+      <div class="flex shrink-0 items-center gap-1">
+        <div class="metric-note" data-card-controls>
+          <button
+            id={"metric-note-#{@card.id}"}
+            type="button"
+            phx-click="open-note"
+            phx-value-id={@card.id}
+            class="metric-note-button"
+            aria-label={"#{if(@editable?, do: "Edit", else: "View")} note for #{@card.metric["name"]}"}
+            aria-describedby={"note-tooltip-#{@card.id}"}
+          ><.icon name="hero-document-text" class="size-3.5" /></button>
+          <div id={"note-tooltip-#{@card.id}"} class="metric-note-tooltip" role="tooltip">
+            <span class="whitespace-pre-wrap">{if(@card.metric["notes"] in [nil, ""],
+              do: if(@editable?, do: "Add a note or assumption", else: "No note yet"),
+              else: @card.metric["notes"]
+            )}</span>
+          </div>
+        </div>
+        <span class="rounded bg-teal-50 px-1.5 font-mono text-[10px] font-semibold leading-4 text-teal-700">
+          {@card.metric["key"]}
+        </span>
+      </div>
+    </div>
+    <%= if Map.has_key?(@card.result, :error) do %>
+      <div
+        id={if(@form, do: "metric-error", else: "metric-error-#{@card.id}")}
+        class="my-2 flex items-start gap-2 text-[11px] leading-4 text-rose-600"
+        role="alert"
+      >
+        <.icon name="hero-exclamation-circle" class="size-4 shrink-0" />
+        <span class="line-clamp-2">{@card.result.error}</span>
+      </div>
+    <% else %>
+      <div
+        data-metric-summary
+        class="text-[22px] font-semibold leading-6 tracking-tight text-slate-800"
+      >
+        {format_value(@card.result.mean)}
+      </div>
+      <div class="mt-0.5"><.histogram result={@card.result} /></div>
+      <div class="mt-0.5 flex justify-between font-mono text-[10px] leading-3 text-slate-400">
+        <span>{format_value(@card.result.low)}</span><span>{format_value(@card.result.high)}</span>
+      </div>
+    <% end %>
+    <div data-metric-input class="mt-0.5 flex items-center gap-1 border-t border-slate-100 pt-0.5">
+      <div :if={@form} class="metric-inline-field min-w-0 flex-1">
+        <.input
+          field={@form[:input]}
+          class="metric-inline-input metric-formula-input"
+          aria-label="Estimate or formula"
+          required
+          maxlength="1000"
+          readonly={!@editable?}
+        />
+      </div>
+      <button
+        :if={!@form}
+        id={"metric-formula-#{@card.id}"}
+        type="button"
+        phx-click="begin-edit"
+        phx-value-id={@card.id}
+        phx-value-field="input"
+        class="metric-edit-trigger min-w-0 flex-1 truncate text-left font-mono text-[10px] leading-3 text-slate-400"
+        aria-label={"#{if(@editable?, do: "Edit", else: "View")} formula for #{@card.metric["name"]}"}
+      >{@card.metric["input"]}</button>
+      <div :if={@range? && @form && @editable?} class="metric-distribution" data-card-controls>
+        <.distribution_icon type={@distribution} />
+        <.input
+          field={@form[:distribution]}
+          type="select"
+          class="metric-distribution-select"
+          aria-label="Range distribution"
+          title={"#{String.capitalize(@distribution)} distribution"}
+          options={[
+            {"Normal · 90% interval", "normal"},
+            {"Lognormal · positive, skewed", "lognormal"},
+            {"Uniform · hard bounds", "uniform"}
+          ]}
+        />
+        <.icon name="hero-chevron-down-mini" class="distribution-chevron size-2.5" />
+      </div>
+      <span :if={@range? && (!@form || !@editable?)} class="metric-distribution-preview">
+        <.distribution_icon type={@distribution} />
+      </span>
+      <.input
+        :if={@form && (!@range? || !@editable?)}
+        field={@form[:distribution]}
+        type="hidden"
+        id="metric-distribution-value"
+      />
+    </div>
+    <div
+      :if={@form && @form.source.errors != []}
+      class="metric-validation"
+      data-card-controls
+      role="alert"
+    >
+      <p :for={{field, error} <- @form.source.errors} id={"metric-validation-#{field}"}>
+        {Phoenix.Naming.humanize(field)} {translate_error(error)}
+      </p>
     </div>
     """
   end
@@ -681,7 +941,7 @@ defmodule MontyWeb.ModelLive do
           are supported, along with <code>sin</code>, <code>cos</code>, <code>tan</code>, <code>floor</code>, <code>ceil</code>, and <code>round</code>.
           Changes preview immediately; save to keep them. Move cards directly and use the shadow
           to preview where they will snap to the background dots
-          ({Canvas.grid_step()}px). Use the position controls or arrow keys on a focused card to move one dot;
+          ({Canvas.grid_step()}px). Use arrow keys on a focused card to move one dot;
           Shift + arrow moves five dots. Drag the background or scroll to pan in any direction.
           Press Escape to cancel a drag.
           <span class="block text-xs text-teal-700">Simulation estimates are approximate, not guarantees. Normal draws may fall outside the entered interval. Preview uses a fixed seed so edits are comparable.</span>
@@ -736,13 +996,15 @@ defmodule MontyWeb.ModelLive do
                 />
               </svg>
               <div id="metrics" phx-update="stream">
-                <button
+                <div
                   :for={{dom_id, card} <- @streams.metrics}
                   id={dom_id}
-                  type="button"
+                  role="group"
+                  tabindex="0"
                   phx-click="select"
                   phx-value-id={card.id}
                   data-metric-id={card.id}
+                  data-selected={to_string(card.selected?)}
                   data-grid-x={card.metric["x"]}
                   data-grid-y={card.metric["y"]}
                   data-movable={to_string(@editable?)}
@@ -753,43 +1015,22 @@ defmodule MontyWeb.ModelLive do
                     Map.has_key?(card.result, :error) && "metric-card-error"
                   ]}
                   style={metric_style(card.metric)}
-                  aria-pressed={to_string(card.selected?)}
-                  aria-label={"Edit #{card.metric["name"]}, reference #{card.metric["key"]}"}
+                  aria-label={"#{if(card.selected?, do: "Selected. ", else: "")}#{if(@editable?, do: "Edit", else: "View")} #{card.metric["name"]}, reference #{card.metric["key"]}"}
                 >
-                  <div class="mb-0.5 flex items-center justify-between gap-2">
-                    <span class="truncate text-xs font-semibold leading-4 text-slate-600">{card.metric[
-                      "name"
-                    ]}</span>
-                    <span class="rounded bg-teal-50 px-1.5 font-mono text-[10px] font-semibold leading-4 text-teal-700">{card.metric[
-                      "key"
-                    ]}</span>
-                  </div>
-                  <%= if Map.has_key?(card.result, :error) do %>
-                    <div class="my-2 flex items-start gap-2 text-[11px] leading-4 text-rose-600">
-                      <.icon name="hero-exclamation-circle" class="size-4 shrink-0" />
-                      <span class="line-clamp-2">{card.result.error}</span>
-                    </div>
-                  <% else %>
-                    <div
-                      data-metric-summary
-                      class="text-[22px] font-semibold leading-6 tracking-tight text-slate-800"
+                  <%= if card.selected? do %>
+                    <.form
+                      for={@metric_form}
+                      id="metric-form"
+                      phx-change="edit-metric"
+                      phx-submit="save-metric"
                     >
-                      {format_value(card.result.mean)}
-                    </div>
-                    <div class="mt-0.5"><.histogram result={card.result} /></div>
-                    <div class="mt-0.5 flex justify-between font-mono text-[10px] leading-3 text-slate-400">
-                      <span>{format_value(card.result.low)}</span><span>{format_value(
-                        card.result.high
-                      )}</span>
-                    </div>
+                      <.input type="hidden" id="metric-id" name="metric[id]" value={card.id} />
+                      <.metric_face card={card} form={@metric_form} editable?={@editable?} />
+                    </.form>
+                  <% else %>
+                    <.metric_face card={card} editable?={@editable?} />
                   <% end %>
-                  <div
-                    data-metric-input
-                    class="mt-0.5 truncate border-t border-slate-100 pt-0.5 font-mono text-[10px] leading-3 text-slate-400"
-                  >
-                    {card.metric["input"]}
-                  </div>
-                </button>
+                </div>
               </div>
               <div
                 :if={@model.metrics == []}
@@ -804,166 +1045,69 @@ defmodule MontyWeb.ModelLive do
               </div>
             </div>
           </section>
-
-          <aside id="metric-detail" class="metric-detail" aria-label="Selected metric details">
-            <%= if @selected do %>
-              <div class="mb-6 flex items-center justify-between">
-                <p class="eyebrow">Metric details</p>
-                <span class="rounded-md bg-teal-50 px-2 py-1 font-mono text-xs font-semibold text-teal-700">{@selected[
-                  "key"
-                ]}</span>
+        </div>
+        <div
+          :if={@note_metric}
+          id="note-modal"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4 backdrop-blur-sm"
+          phx-window-keydown="close-note"
+          phx-key="Escape"
+          phx-mounted={JS.push_focus() |> JS.focus(to: "#note_notes")}
+          phx-remove={JS.pop_focus()}
+        >
+          <.focus_wrap
+            id="note-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="note-dialog-title"
+            phx-click-away="close-note"
+            class="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
+          >
+            <div class="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <p class="eyebrow mb-2">Notes & assumptions · {@note_metric["key"]}</p>
+                <h2 id="note-dialog-title" class="text-lg font-semibold text-slate-800">
+                  {@note_metric["name"]}
+                </h2>
               </div>
-              <.form
-                for={@metric_form}
-                id="metric-form"
-                phx-change="edit-metric"
-                phx-submit="save-metric"
+              <button
+                id="close-note"
+                type="button"
+                phx-click="close-note"
+                class="button-ghost !p-2"
+                aria-label="Close note"
               >
-                <.input type="hidden" id="metric-id" name="metric[id]" value={@selected["id"]} />
-                <.input
-                  field={@metric_form[:name]}
-                  label="Name"
-                  maxlength="120"
-                  required
-                  readonly={!@editable?}
-                />
-                <.input
-                  field={@metric_form[:input]}
-                  label="Estimate or formula"
-                  class="form-input font-mono text-sm"
-                  required
-                  maxlength="1000"
-                  readonly={!@editable?}
-                />
-                <p id="estimate-help" class="-mt-2 mb-5 text-[11px] leading-5 text-slate-400">
-                  Try <code>10 to 20</code>, <code>5%</code>, <code>=A * B</code>,
-                  or <code>=pert(10, 15, 30)</code>.
-                </p>
-                <.input
-                  field={@metric_form[:distribution]}
-                  type="select"
-                  label="Range distribution"
-                  options={[
-                    {"Normal · 90% interval", "normal"},
-                    {"Lognormal · positive, skewed", "lognormal"},
-                    {"Uniform · hard bounds", "uniform"}
-                  ]}
-                  disabled={!@editable?}
-                />
-                <p
-                  id="range-distribution-help"
-                  class="-mt-2 mb-5 text-[11px] leading-5 text-slate-400"
-                >
-                  Applies only to ranges like <code>10 to 20</code>.
-                  Distribution calls in formulas use their own parameters.
-                </p>
-                <.input
-                  field={@metric_form[:notes]}
-                  label="Notes & assumptions"
-                  type="textarea"
-                  rows="2"
-                  maxlength="2000"
-                  readonly={!@editable?}
-                />
-                <button :if={@editable?} id="apply-metric" type="submit" class="button-primary w-full">{if(
-                  @demo?,
-                  do: "Apply changes",
-                  else: "Apply & save changes"
-                )}<.icon
-                  name="hero-arrow-right"
-                  class="size-4"
-                /></button>
-              </.form>
-              <p
-                :if={!@editable?}
-                class="mb-6 rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-500"
-              >
-                You're viewing a shared model. Save a copy to change its assumptions.
-              </p>
-              <div
-                :if={@selected_result && !Map.has_key?(@selected_result, :error)}
-                id="metric-statistics"
-                class="mt-7 border-t border-slate-100 pt-6"
-              >
-                <div class="mb-5 flex justify-between">
-                  <p class="eyebrow">Possible outcomes</p><span class="text-[10px] text-slate-400">90% interval</span>
-                </div>
-                <.histogram result={@selected_result} large />
-                <div class="mt-5 grid grid-cols-3 gap-2">
-                  <div>
-                    <p class="stat-label">5th %ile</p><p id="stat-low" class="stat-value">
-                      {format_value(@selected_result.low)}
-                    </p>
-                  </div>
-                  <div>
-                    <p class="stat-label">Median</p><p id="stat-median" class="stat-value">
-                      {format_value(@selected_result.median)}
-                    </p>
-                  </div>
-                  <div>
-                    <p class="stat-label">95th %ile</p><p id="stat-high" class="stat-value">
-                      {format_value(@selected_result.high)}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <p
-                :if={@selected_result && Map.has_key?(@selected_result, :error)}
-                id="metric-error"
-                class="mt-4 rounded-lg bg-rose-50 p-3 text-xs leading-5 text-rose-600"
-                role="alert"
-              >
-                {@selected_result.error}
-              </p>
-              <div :if={@editable?} class="mt-7 border-t border-slate-100 pt-5">
-                <p class="eyebrow mb-3">Canvas position</p>
-                <p class="mb-3 text-[11px] text-slate-400">
-                  Snap to dots · {Canvas.grid_step()}px per step
-                </p>
-                <div class="flex items-center justify-between">
-                  <div class="flex gap-1">
-                    <button
-                      :for={
-                        {direction, dx, dy, icon} <- [
-                          {"left", -1, 0, "hero-arrow-left-mini"},
-                          {"up", 0, -1, "hero-arrow-up-mini"},
-                          {"down", 0, 1, "hero-arrow-down-mini"},
-                          {"right", 1, 0, "hero-arrow-right-mini"}
-                        ]
-                      }
-                      type="button"
-                      id={"move-#{direction}"}
-                      class="button-secondary px-2"
-                      phx-click="move-metric"
-                      phx-value-id={@selected["id"]}
-                      phx-value-x={@selected["x"] + dx}
-                      phx-value-y={@selected["y"] + dy}
-                      aria-label={"Move metric #{direction} #{Canvas.grid_step()} pixels"}
-                    >
-                      <.icon name={icon} class="size-3.5" />
-                    </button>
-                  </div>
-                  <button
-                    id="delete-metric"
-                    type="button"
-                    class="button-ghost !text-rose-500"
-                    phx-click="delete-metric"
-                    phx-value-id={@selected["id"]}
-                    data-confirm="Delete this metric? Formulas that reference it will need updating."
-                    aria-label="Delete selected metric"
-                  ><.icon name="hero-trash" class="size-4" /></button>
-                </div>
-              </div>
-            <% else %>
-              <p class="eyebrow">Metric details</p>
-              <p class="mt-5 text-sm leading-6 text-slate-400">
-                Select a card to edit its assumptions and explore the distribution.
-              </p>
-            <% end %>
-            <div class="mt-8 flex items-center gap-2 text-[10px] text-slate-400">
-              <.icon name="hero-beaker" class="size-3.5" />Monte Carlo, not a crystal ball.
+                <.icon name="hero-x-mark" class="size-5" />
+              </button>
             </div>
-          </aside>
+            <.form for={@note_form} id="note-form" phx-change="validate-note" phx-submit="save-note">
+              <.input
+                field={@note_form[:notes]}
+                type="textarea"
+                label="Note"
+                rows="6"
+                maxlength="2000"
+                readonly={!@editable?}
+              />
+              <p class="mb-5 text-xs leading-5 text-slate-400">
+                Capture your sources, reasoning, or assumptions. Notes do not affect the calculation.
+              </p>
+              <div class="flex justify-end gap-2">
+                <button id="cancel-note" type="button" phx-click="close-note" class="button-secondary">
+                  {if(@editable?, do: "Cancel", else: "Close")}
+                </button>
+                <button
+                  :if={@editable?}
+                  id="save-note"
+                  type="submit"
+                  class="button-primary"
+                  phx-disable-with="Applying…"
+                >
+                  Apply note
+                </button>
+              </div>
+            </.form>
+          </.focus_wrap>
         </div>
         <div
           id="model-interactions"

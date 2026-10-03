@@ -44,10 +44,13 @@ reauthentication use the generated Phoenix code.
 
 ## Modeling
 
-- Add, rename, delete, drag, or keyboard-position metric cards.
-- Edit point estimates, uncertain ranges, and formulas in the details panel.
-- Preview correlated Monte Carlo outcomes, histograms, means, and
-  5th/50th/95th percentiles.
+- Add, rename, drag, or keyboard-position metric cards.
+- Click a card's name or formula to edit it in place; results update as you type.
+- For valid ranges, choose normal, lognormal, or uniform from the compact
+  dropdown beside the formula. Range cards show the selected distribution's icon.
+- Hover the note icon beside a card's reference to read its assumptions;
+  click it to edit the note in a modal.
+- Preview correlated Monte Carlo histograms, means, and 5th/95th percentiles.
 - Save models, undo the last 20 metric edits in the current session, and
   reopen saved assumptions.
 - Duplicate readable models into your own private workspace.
@@ -59,16 +62,17 @@ reauthentication use the generated Phoenix code.
 
 Cards snap to the background dots in **20px increments** on both axes.
 Compact cards are 240 × 120px, with a small histogram and the estimate/formula
-still visible. The details panel keeps its larger chart. New presets and added
+still visible, including when selected. New presets and added
 cards use spacing based on these dimensions; existing model positions are not rearranged.
 Double-click empty canvas space to add a metric centered at that point, snapped
 to the dot grid. The new card is selected for editing. Double-clicking an existing
 card does not add another, and shared read-only models cannot create cards.
-Drag the card itself from any point: it follows the pointer without a browser
-ghost, while a subtle shadow previews the snapped drop position. Releasing
+Drag from a card's displayed value, histogram, or padding: it follows the pointer
+without a browser ghost, while a subtle shadow previews the snapped drop position. Releasing
 preserves your grab offset and snaps to the nearest dot; Escape cancels a drag.
-Position controls and arrow keys on a focused card move one dot at a time;
+Arrow keys on a focused card move one dot at a time;
 Shift + arrow moves five dots. Mouse, pen, and touch use the same interaction.
+Inputs, dropdowns, and note controls retain their own pointer and keyboard behavior.
 The background scrolls with the cards, and dependency lines follow the cards
 while moving. A shadow turns red if its origin is already occupied.
 
@@ -161,7 +165,8 @@ Normal draws can fall outside the entered
 decision aids, not guarantees.
 
 Edits preview immediately, but are persisted only with **Save model** or
-**Apply & save changes**. The status indicator shows unsaved changes.
+by pressing Enter in the inline name/formula editor. Applying a note updates
+the draft; save the model to persist it. The status indicator shows unsaved changes.
 Saving is owner-only and checks `lock_version`; stale sessions cannot
 silently overwrite another save. If a conflict occurs, export your draft
 before reloading.

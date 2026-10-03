@@ -54,8 +54,10 @@ function fixture({first = null, busy = false} = {}) {
   const pane = {...element(), clientHeight: 500, closest: () => null}
   const background = {closest: () => null}
   const card = {closest: () => card}
+  const cardChild = {closest: selector => selector.includes("[data-metric-id]") ? card : null}
   const input = {closest: () => input}
-  pane.contains = target => [pane, background, card, input].includes(target)
+  const form = {closest: selector => selector.includes("form") ? form : null}
+  pane.contains = target => [pane, background, card, cardChild, input, form].includes(target)
   const canvas = {
     dataset: {gridStep: "20", gridPadding: "32", cardWidth: "240", cardHeight: "120"},
     closest: () => pane,
@@ -69,7 +71,7 @@ function fixture({first = null, busy = false} = {}) {
     target: background, pointerId: 1, pointerType: "mouse", button: 0,
     isPrimary: true, clientX: x, clientY: y, ...extra,
   })
-  return {doc, win, host, pane, canvas, background, card, input, pan, pointer}
+  return {doc, win, host, pane, canvas, background, card, cardChild, input, form, pan, pointer}
 }
 
 test("background drag pans in every direction without changing world coordinates", () => {
@@ -202,7 +204,8 @@ test("capture loss while the primary button is held still rolls a pan back", () 
 test("card descendants, controls, outside targets, and nonprimary buttons never start panning", () => {
   const f = fixture()
   for (const extra of [
-    {target: f.card}, {target: f.input}, {target: {closest: () => null}},
+    {target: f.card}, {target: f.cardChild}, {target: f.input},
+    {target: f.form}, {target: {closest: () => null}},
     {button: 2}, {isPrimary: false}, {pointerType: "unknown"},
   ]) {
     f.pointer("pointerdown", 100, 100, extra)

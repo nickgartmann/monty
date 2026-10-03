@@ -63,6 +63,10 @@ class Element extends Events {
     for (let current = this; current; current = current.parent) {
       if (selector === "[data-metric-id]" && current.dataset.metricId) return current
       if (selector === ".canvas-scroll" && current.className === "canvas-scroll") return current
+      if (selector.includes("a, button, input") &&
+          (selector.split(", ").includes(current.tagName) ||
+           current.attributes.contenteditable !== undefined ||
+           current.attributes["data-card-controls"] !== undefined)) return current
     }
     return null
   }
@@ -539,6 +543,55 @@ test("nonprimary, right-button, and read-only cards are excluded; legacy draggab
   f.pointer("pointerdown", 182, 160)
   assert.equal(f.drag.busy, true)
   f.drag.cancel()
+})
+
+test("nested card controls keep pointer gestures and native text drags; card surface remains draggable", () => {
+  const f = fixture()
+  for (const tagName of ["button", "input", "select", "textarea", "a", "label"]) {
+    const control = new Element(f.doc)
+    control.tagName = tagName
+    f.card.append(control)
+    const child = new Element(f.doc)
+    control.append(child)
+    for (const target of [control, child]) {
+      f.pointer("pointerdown", 182, 160, {target})
+      assert.equal(f.drag.busy, false, `${tagName} should not start a card drag`)
+      f.pointer("pointermove", 240, 200, {target})
+      f.pointer("pointerup", 240, 200, {target})
+      assert.equal(f.moves.length, 0)
+      assert.equal(f.doc.emit("dragstart", {target}).defaultPrevented, false)
+    }
+  }
+  const editor = new Element(f.doc)
+  editor.setAttribute("contenteditable", "true")
+  f.card.append(editor)
+  f.pointer("pointerdown", 182, 160, {target: editor})
+  assert.equal(f.drag.busy, false)
+  f.pointer("pointerdown", 182, 160, {target: f.card})
+  assert.equal(f.drag.busy, true)
+  f.drag.cancel()
+  f.drag.destroy()
+})
+
+test("selected card summaries inside a form remain draggable, while its configuration does not", () => {
+  const f = fixture()
+  const form = new Element(f.doc)
+  form.tagName = "form"
+  f.card.append(form)
+  const summary = new Element(f.doc)
+  form.append(summary)
+  f.pointer("pointerdown", 182, 160, {target: summary})
+  assert.equal(f.drag.busy, true)
+  f.drag.cancel()
+
+  const config = new Element(f.doc)
+  config.setAttribute("data-card-controls", "")
+  form.append(config)
+  const text = new Element(f.doc)
+  config.append(text)
+  f.pointer("pointerdown", 182, 160, {target: text})
+  assert.equal(f.drag.busy, false)
+  f.drag.destroy()
 })
 
 test("cancellation, disconnect, teardown, and stale acknowledgements restore state", () => {
