@@ -175,14 +175,47 @@ landing. This local-only workflow does not itself authorize external
 publication; stop for the required authorization or workflow update if remote
 steps become necessary.
 
-## 4. Safeguard destination work
+## 4. Require a Claude review
+
+After verification passes and all applicable corrections are committed, run
+`claude -p` in the attached source checkout to review the exact combined
+candidate against the destination `main` commit integrated into it. Review the
+full landing diff, not just the last commit or uncommitted changes.
+
+Substitute the recorded commit hashes in this command before running it:
+
+```sh
+claude -p "Perform a read-only code review of the Monty landing candidate. The destination main baseline is <destination-main-commit> and the verified candidate is <verified-candidate-commit>. Inspect git diff <destination-main-commit> <verified-candidate-commit> and relevant surrounding code, tests, and applicable AGENTS.md/AGENT.md instructions. Review committed content at those exact hashes, not unrelated working-tree edits. Do not modify files, create commits, or run landing commands. Look for substantive correctness bugs, regressions, security issues, data-loss risks, violations of project requirements, and missing tests that leave important behavior unverified. Skip cosmetic preferences and optional refactors. For each finding, give severity, file and line, a concrete failure scenario, and supporting evidence. State explicitly whether there are substantive findings. If you cannot complete the review or verify a material concern, state that limitation rather than approving."
+```
+
+- Inspect Claude's complete output and exit status. A successful process exit
+  alone is not review approval. Record the reviewed baseline and candidate
+  hashes and summarize the review result in the thread.
+- **Pause landing on any substantive finding.** Report the findings and wait
+  for the user's direction before fixing or proceeding. Do not silently
+  dismiss findings, treat them as follow-ups, or advance destination `main`.
+  Cosmetic suggestions alone need not block landing.
+- If Claude is unavailable, fails, cannot complete the review, or leaves a
+  material concern unresolved, pause and explain the blocker. Do not install
+  global tools, bypass permissions, or replace the required review with your
+  own approval.
+- After any candidate change, including a review fix or newer destination
+  integration, repeat the full verification group and this Claude review for
+  the new exact candidate. An earlier review does not approve a changed tree.
+- Proceed only when verification passes and the completed Claude review has
+  no unresolved substantive findings. A disputed finding remains a blocker
+  until the user explicitly resolves it or authorizes an exception; record
+  any exception in the landing summary.
+
+## 5. Safeguard destination work
 
 Before landing, inspect and record the destination's branch, `main` commit,
 staged changes, unstaged changes, and untracked files again.
 
 - If destination `main` advanced, fetch and integrate its new commit into the
   candidate, resolve only clear conflicts, and repeat the full verification
-  group on the resulting candidate. Never land an outdated integration.
+  group and Claude review on the resulting candidate. Never land an outdated
+  integration or rely on an earlier candidate's review.
 - If the destination is on another branch, has unrelated pending work, or its
   identity changed, stop without switching branches or overwriting anything.
 - A dirty destination is not automatically disposable. The primary repository
@@ -206,12 +239,12 @@ only when the destination is still on its recorded original commit and its
 working tree is clean. Otherwise leave it intact and explain exactly where
 the pending work is preserved rather than applying it over newer edits.
 
-## 5. Perform and confirm landing
+## 6. Perform and confirm landing
 
-1. Only after all required verification passes, ensure the authorized primary
-   destination is still on `main`, at the commit integrated into the candidate,
-   and clean. If it changed, stop or return to integration and verification
-   without overwriting the change.
+1. Only after all required verification and the Claude review pass, ensure the
+   authorized primary destination is still on `main`, at the commit integrated
+   into the candidate, and clean. If it changed, stop or return to integration,
+   verification, and Claude review without overwriting the change.
 2. Make the exact verified candidate commit available to the destination by
    fetching it from the attached source repository's Git directory. This is
    local transfer only, not a push to a hosting service.
