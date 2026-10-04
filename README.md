@@ -243,10 +243,12 @@ Before deploying:
    HTTPS at the proxy and forward `X-Forwarded-Proto: https`; production already
    uses this header for SSL redirects and HSTS. Only trusted proxies should be
    able to reach the application port.
-3. Configure a production Swoosh email adapter in `config/runtime.exs` and a
-   real sender in `Monty.Accounts.UserNotifier`. The local mailbox adapter and
-   placeholder sender are **development-only**. Keep credentials in environment
-   variables; do not commit them. Use `Swoosh.ApiClient.Req` for HTTP adapters.
+3. Set `POSTMARK_API_KEY` to your Postmark **server API token** (on Fly, use a
+   Fly secret). Production sends email through Postmark using `Swoosh.ApiClient.Req`
+   and requires this secret at startup. Verify `nick@sufficient.software` or the
+   `sufficient.software` domain in Postmark; emails come from
+   `Monty <nick@sufficient.software>`. Development still uses `/dev/mailbox`, and
+   tests use Swoosh's test adapter. Keep credentials out of version control.
 4. Add signup/login/email rate limiting and operational monitoring before
    exposing authentication to the public internet.
 5. Run migrations and `mix assets.deploy`; keep SQLite on a single writable

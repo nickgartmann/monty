@@ -9,7 +9,7 @@ defmodule Monty.Accounts.UserNotifier do
     email =
       new()
       |> to(recipient)
-      |> from({"Monty", "contact@example.com"})
+      |> from({"Monty", "nick@sufficient.software"})
       |> subject(subject)
       |> text_body(body)
 
