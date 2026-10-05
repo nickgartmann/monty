@@ -182,10 +182,25 @@ After verification passes and all applicable corrections are committed, run
 candidate against the destination `main` commit integrated into it. Review the
 full landing diff, not just the last commit or uncommitted changes.
 
+Preapprove `Read`, `Glob`, `Grep`, and the five Git inspection subcommands
+below for this review invocation only. Restrict the available built-in tools
+to those readers and `Bash`, disable configured MCP servers, and use
+`dontAsk` so commands outside the allowlist are denied rather than waiting
+for interactive approval. Do not allow unrestricted `Bash` or `Bash(git *)`,
+enable editing tools, use `bypassPermissions` or
+`--dangerously-skip-permissions`, or change global Claude settings.
+
 Substitute the recorded commit hashes in this command before running it:
 
 ```sh
-claude -p "Perform a read-only code review of the Monty landing candidate. The destination main baseline is <destination-main-commit> and the verified candidate is <verified-candidate-commit>. Inspect git diff <destination-main-commit> <verified-candidate-commit> and relevant surrounding code, tests, and applicable AGENTS.md/AGENT.md instructions. Review committed content at those exact hashes, not unrelated working-tree edits. Do not modify files, create commits, or run landing commands. Look for substantive correctness bugs, regressions, security issues, data-loss risks, violations of project requirements, and missing tests that leave important behavior unverified. Skip cosmetic preferences and optional refactors. For each finding, give severity, file and line, a concrete failure scenario, and supporting evidence. State explicitly whether there are substantive findings. If you cannot complete the review or verify a material concern, state that limitation rather than approving."
+claude \
+  --permission-mode dontAsk \
+  --tools "Read,Glob,Grep,Bash" \
+  --strict-mcp-config \
+  --allowedTools "Read" "Glob" "Grep" \
+    "Bash(git diff *)" "Bash(git show *)" "Bash(git log *)" \
+    "Bash(git ls-tree *)" "Bash(git cat-file *)" \
+  -p "Perform a read-only code review of the Monty landing candidate. The destination main baseline is <destination-main-commit> and the verified candidate is <verified-candidate-commit>. Inspect git diff <destination-main-commit> <verified-candidate-commit> and relevant surrounding code, tests, and applicable AGENTS.md/AGENT.md instructions. Review committed content at those exact hashes, not unrelated working-tree edits. Use only Read, Glob, Grep, and git diff, git show, git log, git ls-tree, or git cat-file from the current checkout. Do not modify files, use output options or shell redirection to write files, create commits, or run landing commands. Look for substantive correctness bugs, regressions, security issues, data-loss risks, violations of project requirements, and missing tests that leave important behavior unverified. Skip cosmetic preferences and optional refactors. For each finding, give severity, file and line, a concrete failure scenario, and supporting evidence. State explicitly whether there are substantive findings. If you cannot complete the review or verify a material concern, state that limitation rather than approving."
 ```
 
 - Inspect Claude's complete output and exit status. A successful process exit
