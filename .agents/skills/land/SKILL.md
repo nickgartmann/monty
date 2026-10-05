@@ -22,10 +22,15 @@ An explicit request to run this skill supplies landing intent. Proceed through
 the checks and landing operation; do not ask again whether to merge.
 Installation, review approval, and passing checks alone are not landing requests.
 
-Operate in the attached Monty checkout. If the destination checkout is not
-attached and direct writes there have not been explicitly authorized, stop and
-ask the user to attach it or authorize direct writes. This is an access gate,
-not a second request for permission to merge.
+Operate and verify in the attached Monty checkout. An explicit invocation
+of /land also authorizes direct writes to the verified primary local Monty
+checkout resolved from the local remote, solely to perform this workflow
+and fast-forward its main branch. No separate attachment or access
+confirmation is required.
+
+All destination identity checks, pending-work safeguards, verification,
+and recovery requirements still apply. This does not authorize pushing,
+publishing, deployment, database migration, or unrelated filesystem edits.
 
 ## Repository evidence
 

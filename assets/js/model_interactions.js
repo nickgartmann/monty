@@ -5,6 +5,7 @@ import {centeredPosition, readGeometry} from "./canvas_geometry.mjs"
 import {CanvasDrag, isCardControl} from "./canvas_drag.mjs"
 import {CanvasPan, isCanvasControl} from "./canvas_pan.mjs"
 import {canvasDebug} from "./canvas_debug.mjs"
+import {CanvasDependencies} from "./canvas_dependencies.mjs"
 
 export const ModelInteractions = {
   mounted() {
@@ -45,6 +46,8 @@ export const ModelInteractions = {
       onRender: () => this.canvasDrag.refreshLinks(),
     })
     this.canvasPan.mount()
+    this.canvasDependencies = new CanvasDependencies({host: this.el, getCanvas: canvas})
+    this.canvasDependencies.mount()
     this.dblclick = event => {
       const element = canvas()
       const pane = element?.closest(".canvas-scroll")
@@ -180,6 +183,7 @@ export const ModelInteractions = {
     canvasDebug.record("liveview.destroyed")
     this.canvasDrag?.destroy()
     this.canvasPan?.destroy()
+    this.canvasDependencies?.destroy()
     document.removeEventListener("dblclick", this.dblclick)
     document.removeEventListener("keydown", this.keydown)
     this.stopCanvasDebug?.()

@@ -81,6 +81,8 @@ Shift + arrow moves five dots. Mouse, pen, and touch use the same interaction.
 Inputs, dropdowns, and note controls retain their own pointer and keyboard behavior.
 The background scrolls with the cards, and dependency lines follow the cards
 while moving. A shadow turns red if its origin is already occupied.
+Dependency arrows stay faint until you hover or keyboard-focus a card, which
+highlights its full upstream dependency chain, not its downstream dependents.
 
 Saved coordinates are fine-grid indices, not card-sized cells. New exports use
 Monty format v2; v1 imports convert older layouts to the nearest dot. Run
