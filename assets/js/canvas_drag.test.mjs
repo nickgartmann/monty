@@ -687,3 +687,68 @@ test("card drops in a rebased distant viewport persist canonical world coordinat
   f.moves[0].done()
   f.drag.destroy()
 })
+
+test("scaled card drags keep world transforms and screen-sized previews across rebasing and acknowledgement", () => {
+  for (const zoom of [0.5, 2]) {
+    const f = fixture()
+    const originX = 1_000_000_000, originY = -1_000_000_000
+    let cameraZoom = zoom
+    Object.assign(f.canvas.dataset, {
+      gridOriginX: String(originX), gridOriginY: String(originY),
+      canvasZoom: String(zoom), linkBend: "50",
+    })
+    Object.assign(f.card.dataset, {gridX: String(originX + 2), gridY: String(originY + 1)})
+    const other = new Element(f.doc)
+    other.dataset = {metricId: "card-2", gridX: String(originX + 14), gridY: String(originY + 8)}
+    f.canvas.append(other)
+    const line = new Element(f.doc)
+    line.dataset = {sourceId: "card-1", targetId: "card-2"}
+    f.canvas.append(line)
+    const cardRect = card => {
+      const [dx, dy] = card.style.transform?.match(/translate3d\(([-\d.]+)px, ([-\d.]+)px, 0\)/)?.slice(1).map(Number) || [0, 0]
+      const left = f.canvas.rect.left +
+        (32 + (Number(card.dataset.gridX) - Number(f.canvas.dataset.gridOriginX)) * 20 + dx) * cameraZoom
+      const top = f.canvas.rect.top +
+        (32 + (Number(card.dataset.gridY) - Number(f.canvas.dataset.gridOriginY)) * 20 + dy) * cameraZoom
+      const width = 240 * cameraZoom, height = 188 * cameraZoom
+      return {left, top, right: left + width, bottom: top + height, width, height}
+    }
+    f.card.getBoundingClientRect = () => cardRect(f.card)
+    other.getBoundingClientRect = () => cardRect(other)
+    const startX = 100 + 82 * zoom, startY = 100 + 60 * zoom
+    f.pointer("pointerdown", startX, startY)
+    f.pointer("pointermove", startX + 25 * zoom, startY + 11 * zoom)
+    assert.equal(f.card.style.transform, "translate3d(25px, 11px, 0) rotate(1deg)")
+    assert.equal(f.drag.preview.style.width, `${240 * zoom}px`)
+    assert.equal(f.drag.preview.style.height, `${188 * zoom}px`)
+    assert.equal(f.drag.preview.style.transform, `translate3d(${92 * zoom}px, ${72 * zoom}px, 0)`)
+    assert.deepEqual([f.drag.preview.dataset.gridX, f.drag.preview.dataset.gridY],
+      [String(originX + 3), String(originY + 2)])
+    assert.equal(line.getAttribute("d"), "M 337 157 C 387 157, 262 286, 312 286")
+
+    f.pointer("pointerup", startX + 25 * zoom, startY + 11 * zoom)
+    assert.deepEqual(f.moves[0].position, {x: originX + 3, y: originY + 2})
+    assert.equal(f.card.style.transform, "translate3d(20px, 20px, 0) rotate(1deg)")
+    assert.equal(line.getAttribute("d"), "M 332 166 C 382 166, 262 286, 312 286")
+
+    // The camera may rebase and LiveView may replace SVG paths before the
+    // server acknowledges the move. Recompute DOM links in the new origin.
+    f.canvas.dataset.gridOriginX = String(originX + 1)
+    f.canvas.rect.left += 27 * zoom
+    line.remove()
+    const patched = new Element(f.doc)
+    patched.dataset = {...line.dataset}
+    f.canvas.append(patched)
+    f.drag.refreshLinks()
+    const beforeAck = patched.getAttribute("d")
+    assert.equal(beforeAck, "M 312 166 C 362 166, 242 286, 292 286")
+    cameraZoom = zoom === 0.5 ? 2 : 0.5
+    f.canvas.dataset.canvasZoom = String(cameraZoom)
+    f.drag.refreshLinks()
+    assert.equal(patched.getAttribute("d"), beforeAck)
+    Object.assign(f.card.dataset, {gridX: String(originX + 3), gridY: String(originY + 2)})
+    assert.equal(f.moves[0].done(), true)
+    assert.equal(patched.getAttribute("d"), beforeAck)
+    f.drag.destroy()
+  }
+})

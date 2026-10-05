@@ -1,4 +1,4 @@
-import {readGeometry} from "./canvas_geometry.mjs"
+import {readGeometry, readZoom} from "./canvas_geometry.mjs"
 
 // Pan uses canonical grid positions rebased near the camera. Card dragging uses
 // actual DOM rectangles so its connections follow the animated pointer preview.
@@ -7,6 +7,7 @@ export function updateCanvasLinks(canvas, paths, fromGrid = false) {
   if (paths.length === 0) return
   const grid = readGeometry(canvas.dataset)
   const canvasRect = fromGrid ? null : canvas.getBoundingClientRect()
+  const zoom = fromGrid ? 1 : readZoom(canvas.dataset)
   const cards = new Map([...canvas.querySelectorAll("[data-metric-id]")].map(card => {
     const rect = fromGrid ? {
       left: grid.padding + (Number(card.dataset.gridX) - grid.originX) * grid.step,
@@ -14,12 +15,12 @@ export function updateCanvasLinks(canvas, paths, fromGrid = false) {
       width: Number(canvas.dataset.cardWidth),
       height: Number(canvas.dataset.cardHeight),
     } : card.getBoundingClientRect()
-    const left = rect.left - (canvasRect?.left || 0)
-    const top = rect.top - (canvasRect?.top || 0)
+    const left = (rect.left - (canvasRect?.left || 0)) / zoom
+    const top = (rect.top - (canvasRect?.top || 0)) / zoom
     return [card.dataset.metricId, {
       left, top,
-      right: left + (rect.width ?? rect.right - rect.left),
-      middle: top + (rect.height ?? rect.bottom - rect.top) / 2,
+      right: left + (rect.width ?? rect.right - rect.left) / zoom,
+      middle: top + (rect.height ?? rect.bottom - rect.top) / (2 * zoom),
     }]
   }))
   const bend = Number(canvas.dataset.linkBend)

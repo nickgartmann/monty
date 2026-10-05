@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import {centeredPosition, readGeometry, snapPosition} from "./canvas_geometry.mjs"
+import {centeredPosition, readGeometry, readZoom, snapPosition} from "./canvas_geometry.mjs"
 
 const geometry = {step: 20, padding: 32, originX: 0, originY: 0}
 
@@ -12,6 +12,15 @@ test("new cards are centered on the double-click point and snapped to the grid",
 
 test("geometry is read from the current server-rendered canvas", () => {
   assert.deepEqual(readGeometry({gridStep: "20", gridPadding: "32"}), geometry)
+})
+
+test("zoom reads the camera scale while old and malformed canvases remain at one", () => {
+  assert.equal(readZoom({canvasZoom: "0.5"}), 0.5)
+  assert.equal(readZoom({canvasZoom: "2"}), 2)
+  for (const dataset of [undefined, {}, {canvasZoom: ""}, {canvasZoom: "0"},
+    {canvasZoom: "-1"}, {canvasZoom: "NaN"}, {canvasZoom: "Infinity"}]) {
+    assert.equal(readZoom(dataset), 1)
+  }
 })
 
 test("old or malformed markup is rejected rather than generating NaN drag coordinates", () => {

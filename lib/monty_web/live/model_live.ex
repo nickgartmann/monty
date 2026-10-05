@@ -971,8 +971,51 @@ defmodule MontyWeb.ModelLive do
             style={canvas_style()}
             data-canvas-viewport
             tabindex="0"
-            aria-label="Model canvas. Drag background or use arrow keys to pan."
+            aria-label="Model canvas. Drag background or use arrow keys to pan. Use plus, minus, or zero to zoom."
+            aria-keyshortcuts="Plus - 0"
           >
+            <div
+              id="canvas-zoom-controls"
+              class="canvas-zoom-controls"
+              data-canvas-controls
+              phx-update="ignore"
+              role="group"
+              aria-label="Canvas zoom"
+            >
+              <button
+                id="canvas-zoom-out"
+                type="button"
+                class="canvas-tool-button"
+                data-canvas-zoom="out"
+                aria-label="Zoom out"
+                title="Zoom out"
+              >
+                <.icon name="hero-minus" class="size-4" />
+              </button>
+              <button
+                id="canvas-zoom-level"
+                type="button"
+                class="canvas-zoom-level"
+                data-canvas-zoom="reset"
+                aria-label="Zoom 100%. Reset zoom to 100%"
+                title="Reset zoom to 100%"
+              >
+                100%
+              </button>
+              <button
+                id="canvas-zoom-in"
+                type="button"
+                class="canvas-tool-button"
+                data-canvas-zoom="in"
+                aria-label="Zoom in"
+                title="Zoom in (Ctrl/⌘ + scroll or trackpad pinch)"
+              >
+                <.icon name="hero-plus" class="size-4" />
+              </button>
+              <span id="canvas-zoom-status" class="sr-only" role="status" aria-atomic="true">
+                Zoom 100%
+              </span>
+            </div>
             <div
               id="model-canvas"
               class="canvas-surface"
@@ -1141,6 +1184,8 @@ defmodule MontyWeb.ModelLive do
                 to preview where they will snap to the background dots
                 ({Canvas.grid_step()}px). Use arrow keys on a focused card to move one dot;
                 Shift + arrow moves five dots. Drag the background or scroll to pan in any direction.
+                Zoom with the + and − controls, Ctrl/⌘ + scroll, or a trackpad pinch.
+                Click the zoom percentage to return to 100%. With the canvas focused, use +, −, and 0.
                 Press Escape to cancel a drag. Use Cmd+Z or Ctrl+Z to undo a model change;
                 text fields keep their normal text undo.
               </p>

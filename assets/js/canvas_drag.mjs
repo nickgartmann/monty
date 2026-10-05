@@ -1,4 +1,4 @@
-import {readGeometry, snapPosition} from "./canvas_geometry.mjs"
+import {readGeometry, readZoom, snapPosition} from "./canvas_geometry.mjs"
 import {canvasDebug} from "./canvas_debug.mjs"
 import {updateCanvasLinks} from "./canvas_links.mjs"
 import {primaryButtonReleased} from "./canvas_pointer.mjs"
@@ -160,20 +160,22 @@ export class CanvasDrag {
     }
     const rect = card.getBoundingClientRect()
     const canvasRect = canvas.getBoundingClientRect()
+    const zoom = readZoom(canvas.dataset)
     this.active = {
       phase: "pending",
       pointerId: event.pointerId,
       card,
       canvas,
       grid,
+      zoom,
       startX: event.clientX,
       startY: event.clientY,
       clientX: event.clientX,
       clientY: event.clientY,
       offsetX: event.clientX - rect.left,
       offsetY: event.clientY - rect.top,
-      originLeft: rect.left - canvasRect.left,
-      originTop: rect.top - canvasRect.top,
+      originLeft: (rect.left - canvasRect.left) / zoom,
+      originTop: (rect.top - canvasRect.top) / zoom,
       width: rect.width,
       height: rect.height,
       transform: card.style.transform,
@@ -332,8 +334,8 @@ export class CanvasDrag {
   update(state) {
     const {step, padding, originX, originY} = state.grid
     const rect = state.canvas.getBoundingClientRect()
-    const left = state.clientX - rect.left - state.offsetX
-    const top = state.clientY - rect.top - state.offsetY
+    const left = (state.clientX - rect.left - state.offsetX) / state.zoom
+    const top = (state.clientY - rect.top - state.offsetY) / state.zoom
     this.transformCard(state, left - state.originLeft, top - state.originTop)
     this.updateLinks(state)
     const target = snapPosition({left, top}, state.grid)
@@ -356,7 +358,7 @@ export class CanvasDrag {
       width: `${state.width}px`,
       height: `${state.height}px`,
     })
-    const previewTransform = `translate3d(${rect.left + padding + (target.x - originX) * step - bounds.left}px, ${rect.top + padding + (target.y - originY) * step - bounds.top}px, 0)`
+    const previewTransform = `translate3d(${rect.left + (padding + (target.x - originX) * step) * state.zoom - bounds.left}px, ${rect.top + (padding + (target.y - originY) * step) * state.zoom - bounds.top}px, 0)`
     if (this.preview.style.transform !== previewTransform) this.preview.style.transform = previewTransform
     this.preview.dataset.gridX = String(target.x)
     this.preview.dataset.gridY = String(target.y)

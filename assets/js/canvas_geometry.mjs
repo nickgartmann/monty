@@ -21,6 +21,15 @@ export function readGeometry(dataset) {
   return geometry.step > 0 ? geometry : null
 }
 
+// Older canvases have no zoom attribute; malformed values must not produce NaN
+// pointer coordinates or SVG paths.
+export function readZoom(dataset) {
+  const raw = dataset?.canvasZoom
+  if (typeof raw !== "string" || raw.trim() === "") return 1
+  const zoom = Number(raw)
+  return Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+}
+
 export function snapPosition({left, top}, {step, padding, originX = 0, originY = 0}) {
   return {
     x: originX + Math.round((left - padding) / step),

@@ -217,3 +217,20 @@ test("undo shortcuts do nothing with no history, read-only models, modals, or ac
   assert.equal(f.key(f.card, "z", {metaKey: true}).defaultPrevented, undefined)
   assert.equal(clicks, 0)
 })
+
+test("double-click places centered cards in world coordinates at each zoom and rebased origin", t => {
+  const f = fixture(t)
+  f.canvas.getBoundingClientRect = () => ({left: 100, top: 80})
+  const background = {closest: () => null}
+  for (const zoom of [0.25, 0.5, 1, 2]) {
+    f.hook.canvasPan.zoom = zoom
+    f.canvas.dataset.gridOriginX = "-1000000000"
+    f.canvas.dataset.gridOriginY = "1000000000"
+    // World point (232, 252), less the centered card size, snaps to (4, 8).
+    f.hook.dblclick({
+      target: background, clientX: 100 + 232 * zoom, clientY: 80 + 252 * zoom,
+      preventDefault() {},
+    })
+    assert.deepEqual(f.pushed.pop().payload, {x: -999999996, y: 1000000008})
+  }
+})

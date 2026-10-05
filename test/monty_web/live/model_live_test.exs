@@ -7,6 +7,21 @@ defmodule MontyWeb.ModelLiveTest do
   alias Monty.{Canvas, Examples, Models, Repo}
   alias Monty.Accounts.Scope
 
+  test "canvas zoom controls are accessible and outside the scaled surface", %{conn: conn} do
+    {:ok, view, _} = live(conn, ~p"/try")
+    assert has_element?(view, "#canvas-viewport > #canvas-zoom-controls[data-canvas-controls]")
+
+    assert has_element?(
+             view,
+             "#canvas-zoom-controls[phx-update=ignore][aria-label='Canvas zoom']"
+           )
+
+    assert has_element?(view, "#canvas-zoom-out[data-canvas-zoom=out][aria-label='Zoom out']")
+    assert has_element?(view, "#canvas-zoom-in[data-canvas-zoom=in][aria-label='Zoom in']")
+    assert has_element?(view, "#canvas-zoom-level[data-canvas-zoom=reset]")
+    refute has_element?(view, "#model-canvas #canvas-zoom-controls")
+  end
+
   test "sandbox renders and calculates without an account", %{conn: conn} do
     {:ok, view, _} = live(conn, ~p"/try")
     assert has_element?(view, "#model-canvas")

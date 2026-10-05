@@ -92,14 +92,25 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   position: relative; overflow: clip; height: calc(100dvh - 76px); min-height: 480px; background-color: #f5f8f5;
   cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
   background-image: radial-gradient(#cddbd3 1px, transparent 1px);
-  background-size: var(--canvas-grid-step, 20px) var(--canvas-grid-step, 20px);
-  background-position: calc(var(--canvas-pan-x, 0px) + var(--canvas-dot-offset, 2px)) calc(var(--canvas-pan-y, 0px) + var(--canvas-dot-offset, 2px));
+  background-size: var(--canvas-grid-size, var(--canvas-grid-step, 20px)) var(--canvas-grid-size, var(--canvas-grid-step, 20px));
+  background-position: calc(var(--canvas-pan-x, 0px) + var(--canvas-grid-offset, var(--canvas-dot-offset, 2px))) calc(var(--canvas-pan-y, 0px) + var(--canvas-grid-offset, var(--canvas-dot-offset, 2px)));
 }
 .canvas-panning, .canvas-panning * { cursor: grabbing !important; }
 .canvas-surface {
   position: absolute; inset: 0; overflow: visible;
-  transform: translate(var(--canvas-pan-x, 0px), var(--canvas-pan-y, 0px));
+  transform-origin: 0 0;
+  transform: translate(var(--canvas-pan-x, 0px), var(--canvas-pan-y, 0px)) scale(var(--canvas-zoom, 1));
 }
+.canvas-zoom-controls {
+  position: absolute; bottom: 20px; left: 20px; z-index: 40; display: flex; align-items: center; gap: 4px;
+  padding: 4px; border: 1px solid #dce6df; border-radius: 12px; background: #fff; box-shadow: 0 3px 10px #123a2010;
+}
+.canvas-zoom-controls .canvas-tool-button { border: none; box-shadow: none; width: 36px; height: 36px; }
+.canvas-zoom-level {
+  min-width: 60px; height: 36px; border-radius: 8px; color: #435c56; font-size: 12px; font-weight: 550;
+  font-variant-numeric: tabular-nums; transition: background .15s;
+}
+.canvas-zoom-level:hover { background: #f0fdfa; }
 .canvas-connections { overflow: visible; }
 .metric-card {
   position: absolute; width: var(--metric-width, 240px); height: var(--metric-height, 120px); text-align: left; border: 1px solid #dce6df;

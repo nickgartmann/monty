@@ -63,8 +63,8 @@ export const ModelInteractions = {
       event.preventDefault()
       const rect = element.getBoundingClientRect()
       const position = centeredPosition({
-        left: event.clientX - rect.left,
-        top: event.clientY - rect.top,
+        left: (event.clientX - rect.left) / this.canvasPan.zoom,
+        top: (event.clientY - rect.top) / this.canvasPan.zoom,
       }, {width, height}, grid)
       const previousSelection = document.getElementById("metric-id")?.value
       this.pushEvent("add-metric", position, () => {
@@ -149,6 +149,7 @@ export const ModelInteractions = {
         pointerId: pan?.pointerId, captured: pan?.captured === true,
         nativeCapture: pan ? this.el.hasPointerCapture(pan.pointerId) : false,
         position: this.canvasPan?.position, origin: pan?.origin,
+        zoom: this.canvasPan?.zoom,
       },
     }
   },

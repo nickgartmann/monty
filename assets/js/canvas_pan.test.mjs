@@ -51,7 +51,10 @@ function fixture({first = null, busy = false, panelInPane = true} = {}) {
     host.capture = null
     host.emit("lostpointercapture", {pointerId: id})
   }
-  const pane = {...element(), clientHeight: 500, closest: () => null}
+  const pane = {
+    ...element(), clientHeight: 500, closest: () => null,
+    getBoundingClientRect: () => ({left: 100, top: 80, right: 1000, bottom: 580}),
+  }
   const background = {closest: () => null}
   const card = {closest: selector => selector.includes("[data-metric-id]") ? card : null}
   const cardChild = {closest: selector => selector.includes("[data-metric-id]") ? card : null}
@@ -295,7 +298,7 @@ test("post-pan click suppression does not swallow floating control clicks or dou
   f.pan.destroy()
 })
 
-test("scrolling and focused-viewport arrows pan, without stealing card keys or browser zoom", () => {
+test("scrolling and focused-viewport arrows pan without stealing card keys", () => {
   const f = fixture()
   const wheel = extra => f.doc.emit("wheel", {
     target: f.background, deltaX: 10, deltaY: 30, deltaMode: 0, ...extra,
@@ -304,7 +307,6 @@ test("scrolling and focused-viewport arrows pan, without stealing card keys or b
   assert.deepEqual(f.pan.position, {x: -10, y: -30})
   wheel({deltaX: 0, deltaY: 2, deltaMode: 1, shiftKey: true})
   assert.deepEqual(f.pan.position, {x: -50, y: -30})
-  assert.equal(wheel({ctrlKey: true}).defaultPrevented, undefined)
   f.doc.emit("keydown", {target: f.pane, key: "ArrowDown"})
   assert.deepEqual(f.pan.position, {x: -50, y: -70})
   f.doc.emit("keydown", {target: f.card, key: "ArrowDown"})
@@ -389,4 +391,143 @@ test("teardown removes all global listeners, pointer capture, and click suppress
   assert.equal(f.win.count(), 0)
   assert.equal(f.host.count(), 0)
   assert.equal(f.host.capture, null)
+})
+
+test("zoom keeps the anchored world point stationary and rebases scaled dots", () => {
+  const f = fixture()
+  f.pan.position = {x: -123, y: 47}
+  const anchor = {x: 180, y: 100}
+  const world = {x: anchor.x - f.pan.position.x, y: anchor.y - f.pan.position.y}
+  for (const zoom of [0.5, 2, 1]) {
+    f.pan.setZoom(zoom, anchor)
+    assert.equal((anchor.x - f.pan.position.x) / zoom, world.x)
+    assert.equal((anchor.y - f.pan.position.y) / zoom, world.y)
+    assert.equal(f.canvas.dataset.canvasZoom, String(zoom))
+    assert.equal(f.pane.style.getPropertyValue("--canvas-zoom"), String(zoom))
+    assert.equal(f.pane.style.getPropertyValue("--canvas-grid-size"), `${20 * zoom}px`)
+    assert.equal(f.pane.style.getPropertyValue("--canvas-grid-offset"), `${2 * zoom}px`)
+    const origin = Number(f.canvas.dataset.gridOriginX)
+    assert.equal(Number.parseFloat(f.pane.style.getPropertyValue("--canvas-pan-x")),
+      f.pan.position.x + origin * 20 * zoom)
+  }
+  f.pan.destroy()
+})
+
+test("Ctrl/Cmd wheel and trackpad pinch zoom at the pointer; outside wheels stay native", () => {
+  for (const modifier of ["ctrlKey", "metaKey"]) {
+    for (const deltaMode of [0, 1, 2]) {
+      const f = fixture()
+      const event = f.doc.emit("wheel", {
+        target: f.background, [modifier]: true, deltaY: -1, deltaMode,
+        clientX: 350, clientY: 280,
+      })
+      assert.equal(event.defaultPrevented, true)
+      assert.ok(f.pan.zoom > 1)
+      assert.equal((250 - f.pan.position.x) / f.pan.zoom, 250)
+      assert.equal((200 - f.pan.position.y) / f.pan.zoom, 200)
+      for (const target of [f.panelChild, {closest: () => null}]) {
+        const outside = f.doc.emit("wheel", {target, [modifier]: true, deltaY: -10, deltaMode: 0})
+        assert.equal(outside.defaultPrevented, undefined)
+      }
+      f.pan.destroy()
+    }
+  }
+})
+
+test("zoom buttons support nested icons, bounds, percentage feedback, and reset", () => {
+  const f = fixture()
+  const buttons = new Map()
+  for (const [id, action] of [["out", "out"], ["in", "in"], ["level", "reset"]]) {
+    const button = {
+      dataset: {canvasZoom: action},
+      closest: selector => selector === "[data-canvas-zoom]" ? button : f.panel,
+      setAttribute(name, value) { this[name] = value },
+    }
+    buttons.set(`#canvas-zoom-${id}`, button)
+  }
+  const status = {textContent: "Zoom 100%"}
+  buttons.set("#canvas-zoom-status", status)
+  f.pane.querySelector = selector => buttons.get(selector)
+  const contains = f.pane.contains
+  f.pane.contains = target => [...buttons.values()].includes(target) || contains(target)
+  const click = action => f.doc.emit("click", {
+    target: {closest: () => buttons.get(`#canvas-zoom-${action}`)},
+  })
+  click("in")
+  assert.equal(f.pan.zoom, 1.25)
+  assert.deepEqual(f.pan.position, {x: -112.5, y: -62.5})
+  assert.equal(buttons.get("#canvas-zoom-level").textContent, "125%")
+  assert.equal(buttons.get("#canvas-zoom-level")["aria-label"], "Zoom 125%. Reset zoom to 100%")
+  assert.equal(status.textContent, "Zoom 125%")
+  f.pan.setZoom(100)
+  assert.equal(f.pan.zoom, 2)
+  assert.equal(buttons.get("#canvas-zoom-in").disabled, true)
+  f.pan.setZoom(0)
+  assert.equal(f.pan.zoom, 0.25)
+  assert.equal(buttons.get("#canvas-zoom-out").disabled, true)
+  click("level")
+  assert.equal(f.pan.zoom, 1)
+  assert.equal(buttons.get("#canvas-zoom-level").textContent, "100%")
+  assert.equal(status.textContent, "Zoom 100%")
+  assert.equal(buttons.get("#canvas-zoom-out").disabled, false)
+  assert.equal(buttons.get("#canvas-zoom-in").disabled, false)
+  f.pan.destroy()
+})
+
+test("zoom keyboard shortcuts are scoped to the focused viewport and blocked during gestures", () => {
+  const f = fixture()
+  for (const target of [f.card, f.panelChild, f.input]) {
+    assert.equal(f.doc.emit("keydown", {target, key: "+"}).defaultPrevented, undefined)
+  }
+  for (const key of ["+", "=", "-", "0"]) {
+    assert.equal(f.doc.emit("keydown", {target: f.pane, key}).defaultPrevented, true)
+  }
+  assert.equal(f.pan.zoom, 1)
+  f.pointer("pointerdown", 100, 100)
+  f.pan.setZoom(2)
+  assert.equal(f.pan.zoom, 1)
+  f.pan.cancel()
+  f.pan.isBusy = () => true
+  f.pan.setZoom(2)
+  assert.equal(f.pan.zoom, 1)
+  f.pan.destroy()
+})
+
+test("zoom and rendering state survive LiveView patches without changing model coordinates", () => {
+  const f = fixture({first: {gridX: "-1000000000", gridY: "1000000000"}})
+  f.pan.setZoom(0.5)
+  const position = {...f.pan.position}
+  const patched = element()
+  f.pane.hasAttribute = name => name === "data-canvas-viewport"
+  preservePanStyles(f.pane, patched)
+  for (const key of ["--canvas-zoom", "--canvas-grid-size", "--canvas-grid-offset"]) {
+    assert.equal(patched.style.getPropertyValue(key), f.pane.style.getPropertyValue(key))
+  }
+  f.canvas.hasAttribute = name => name === "data-model-canvas"
+  const nextCanvas = {dataset: {}}
+  preservePanStyles(f.canvas, nextCanvas)
+  assert.deepEqual(nextCanvas.dataset, {
+    gridOriginX: f.canvas.dataset.gridOriginX, gridOriginY: f.canvas.dataset.gridOriginY,
+    canvasZoom: "0.5",
+  })
+  f.doc.emit("phx:update")
+  assert.equal(f.pan.zoom, 0.5)
+  assert.deepEqual(f.pan.position, position)
+  f.pan.destroy()
+})
+
+test("panning remains screen-space and keyboard focus reveals scaled distant cards", () => {
+  const f = fixture()
+  f.pan.setZoom(0.5, {x: 0, y: 0})
+  f.pointer("pointerdown", 100, 100)
+  f.pointer("pointermove", 160, 140)
+  f.pointer("pointerup", 160, 140)
+  assert.deepEqual(f.pan.position, {x: 60, y: 40})
+  f.card.dataset = {gridX: "-1000000000", gridY: "1000000000"}
+  f.doc.emit("focusin", {target: f.card})
+  const left = (32 + Number(f.card.dataset.gridX) * 20) * f.pan.zoom + f.pan.position.x
+  const top = (32 + Number(f.card.dataset.gridY) * 20) * f.pan.zoom + f.pan.position.y
+  assert.equal(left, 16)
+  assert.equal(top + 120 * f.pan.zoom, 484)
+  f.pan.destroy()
 })

@@ -4,7 +4,11 @@ import {updateCanvasLinks} from "./canvas_links.mjs"
 import {primaryButtonReleased} from "./canvas_pointer.mjs"
 
 const PAN_THRESHOLD = 5
-const PAN_PROPERTIES = ["--canvas-pan-x", "--canvas-pan-y", "--canvas-origin-x", "--canvas-origin-y"]
+const MIN_ZOOM = 0.25
+const MAX_ZOOM = 2
+const ZOOM_STEP = 1.25
+const PAN_PROPERTIES = ["--canvas-pan-x", "--canvas-pan-y", "--canvas-origin-x", "--canvas-origin-y",
+  "--canvas-zoom", "--canvas-grid-size", "--canvas-grid-offset"]
 
 export function isCanvasControl(target) {
   return target?.closest?.("[data-canvas-controls]") != null
@@ -13,7 +17,7 @@ export function isCanvasControl(target) {
 // LiveView owns the world; the local viewport is presentation, not model data.
 export function preservePanStyles(from, to) {
   if (from.hasAttribute?.("data-model-canvas")) {
-    for (const key of ["gridOriginX", "gridOriginY"]) {
+    for (const key of ["gridOriginX", "gridOriginY", "canvasZoom"]) {
       if (from.dataset[key] !== undefined) to.dataset[key] = from.dataset[key]
     }
   }
@@ -33,9 +37,10 @@ export class CanvasPan {
     this.doc = host.ownerDocument
     this.win = this.doc.defaultView
     this.position = {x: 0, y: 0}
+    this.zoom = 1
     this.active = null
     for (const name of ["pointerDown", "pointerMove", "pointerUp", "pointerCancel",
-      "lostCapture", "keyDown", "focusIn", "wheel", "click", "refresh", "cancel"]) {
+      "lostCapture", "keyDown", "focusIn", "wheel", "zoomClick", "click", "refresh", "cancel"]) {
       this[name] = this[name].bind(this)
     }
     this.blur = () => this.cancel("blur")
@@ -69,6 +74,7 @@ export class CanvasPan {
     this.doc.addEventListener("keydown", this.keyDown)
     this.doc.addEventListener("focusin", this.focusIn)
     this.doc.addEventListener("wheel", this.wheel, {passive: false})
+    this.doc.addEventListener("click", this.zoomClick)
     this.doc.addEventListener("phx:update", this.refresh)
     this.host.addEventListener("lostpointercapture", this.lostCapture)
     this.win.addEventListener("blur", this.blur)
@@ -84,17 +90,58 @@ export class CanvasPan {
     if (!pane || !grid) return
     // Keep layout coordinates and transforms small, even when world coordinates
     // are distant. CSS subtracts this origin before applying layout limits.
-    const originX = Math.floor(-this.position.x / grid.step)
-    const originY = Math.floor(-this.position.y / grid.step)
+    const originX = Math.floor(-this.position.x / (grid.step * this.zoom))
+    const originY = Math.floor(-this.position.y / (grid.step * this.zoom))
     canvas.dataset.gridOriginX = String(originX)
     canvas.dataset.gridOriginY = String(originY)
+    canvas.dataset.canvasZoom = String(this.zoom)
     pane.style.setProperty("--canvas-origin-x", `${originX * grid.step}px`)
     pane.style.setProperty("--canvas-origin-y", `${originY * grid.step}px`)
-    pane.style.setProperty("--canvas-pan-x", `${this.position.x + originX * grid.step}px`)
-    pane.style.setProperty("--canvas-pan-y", `${this.position.y + originY * grid.step}px`)
+    pane.style.setProperty("--canvas-pan-x", `${this.position.x + originX * grid.step * this.zoom}px`)
+    pane.style.setProperty("--canvas-pan-y", `${this.position.y + originY * grid.step * this.zoom}px`)
+    pane.style.setProperty("--canvas-zoom", String(this.zoom))
+    pane.style.setProperty("--canvas-grid-size", `${grid.step * this.zoom}px`)
+    pane.style.setProperty("--canvas-grid-offset", `${(grid.padding % grid.step - grid.step / 2) * this.zoom}px`)
     pane.classList.toggle("canvas-panning", this.active?.dragging === true)
+    const percent = Math.round(this.zoom * 100)
+    const label = pane.querySelector?.("#canvas-zoom-level")
+    if (label) {
+      label.textContent = `${percent}%`
+      label.setAttribute("aria-label", `Zoom ${percent}%. Reset zoom to 100%`)
+    }
+    const status = pane.querySelector?.("#canvas-zoom-status")
+    if (status && status.textContent !== `Zoom ${percent}%`) status.textContent = `Zoom ${percent}%`
+    const out = pane.querySelector?.("#canvas-zoom-out")
+    const into = pane.querySelector?.("#canvas-zoom-in")
+    if (out) out.disabled = this.zoom <= MIN_ZOOM
+    if (into) into.disabled = this.zoom >= MAX_ZOOM
     updateCanvasLinks(canvas, undefined, true)
     this.onRender()
+  }
+
+  setZoom(value, anchor) {
+    if (this.busy || this.isBusy() || !Number.isFinite(value) || !this.pane) return
+    const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value))
+    if (zoom === this.zoom) return
+    const bounds = this.pane.getBoundingClientRect()
+    anchor ||= {x: (bounds.right - bounds.left) / 2, y: (bounds.bottom - bounds.top) / 2}
+    // Keep the world point under the pointer (or viewport center) stationary.
+    const ratio = zoom / this.zoom
+    this.position = {
+      x: anchor.x - (anchor.x - this.position.x) * ratio,
+      y: anchor.y - (anchor.y - this.position.y) * ratio,
+    }
+    this.zoom = zoom
+    this.refresh()
+  }
+
+  zoomClick(event) {
+    const button = event.target.closest?.("[data-canvas-zoom]")
+    if (!button || button.disabled || !this.pane?.contains(button)) return
+    const action = button.dataset.canvasZoom
+    if (!["in", "out", "reset"].includes(action)) return
+    event.preventDefault()
+    this.setZoom(action === "reset" ? 1 : this.zoom * (action === "in" ? ZOOM_STEP : 1 / ZOOM_STEP))
   }
 
   pointerDown(event) {
@@ -214,6 +261,11 @@ export class CanvasPan {
     }
     if (this.busy || this.isBusy() || event.target !== this.pane ||
         event.altKey || event.ctrlKey || event.metaKey) return
+    if (["+", "=", "-", "0"].includes(event.key)) {
+      event.preventDefault()
+      this.setZoom(event.key === "0" ? 1 : this.zoom * (event.key === "-" ? 1 / ZOOM_STEP : ZOOM_STEP))
+      return
+    }
     const directions = {ArrowLeft: [1, 0], ArrowRight: [-1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1]}
     const direction = directions[event.key]
     if (!direction) return
@@ -235,9 +287,10 @@ export class CanvasPan {
     const grid = readGeometry(canvas.dataset)
     if (!grid) return
     // An offscreen card's DOM rectangle may already be clamped by the browser.
-    const left = bounds.left + grid.padding + Number(card.dataset.gridX) * grid.step + this.position.x
-    const top = bounds.top + grid.padding + Number(card.dataset.gridY) * grid.step + this.position.y
-    const rect = {left, top, right: left + Number(canvas.dataset.cardWidth), bottom: top + Number(canvas.dataset.cardHeight)}
+    const left = bounds.left + (grid.padding + Number(card.dataset.gridX) * grid.step) * this.zoom + this.position.x
+    const top = bounds.top + (grid.padding + Number(card.dataset.gridY) * grid.step) * this.zoom + this.position.y
+    const rect = {left, top, right: left + Number(canvas.dataset.cardWidth) * this.zoom,
+      bottom: top + Number(canvas.dataset.cardHeight) * this.zoom}
     const dx = rect.left < bounds.left ? bounds.left + 16 - rect.left
       : rect.right > bounds.right ? bounds.right - 16 - rect.right : 0
     const dy = rect.top < bounds.top ? bounds.top + 16 - rect.top
@@ -249,9 +302,17 @@ export class CanvasPan {
 
   wheel(event) {
     if (isCanvasControl(event.target) || this.busy || this.isBusy() ||
-        event.ctrlKey || event.metaKey || !this.pane?.contains(event.target)) return
+        !this.pane?.contains(event.target)) return
     event.preventDefault()
     const scale = event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? this.pane.clientHeight : 1
+    if (event.ctrlKey || event.metaKey) {
+      const bounds = this.pane.getBoundingClientRect()
+      const exponent = Math.min(4, Math.max(-4, -event.deltaY * scale * 0.01))
+      this.setZoom(this.zoom * Math.exp(exponent), {
+        x: event.clientX - bounds.left, y: event.clientY - bounds.top,
+      })
+      return
+    }
     const dx = event.shiftKey && !event.deltaX ? event.deltaY : event.deltaX
     const dy = event.shiftKey && !event.deltaX ? 0 : event.deltaY
     this.position.x -= dx * scale
@@ -291,6 +352,7 @@ export class CanvasPan {
     this.doc.removeEventListener("keydown", this.keyDown)
     this.doc.removeEventListener("focusin", this.focusIn)
     this.doc.removeEventListener("wheel", this.wheel)
+    this.doc.removeEventListener("click", this.zoomClick)
     this.doc.removeEventListener("phx:update", this.refresh)
     this.host.removeEventListener("lostpointercapture", this.lostCapture)
     this.win.removeEventListener("blur", this.blur)
